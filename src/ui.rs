@@ -24,7 +24,7 @@ pub struct EditorState {
     pub palette_row: usize,
     /// Currently selected entry within the row.
     pub palette_col: usize,
-    /// ALT menu open + which item is focused.
+    /// ESC menu open + which item is focused.
     pub menu_open: bool,
     pub menu_focus: usize,
     /// Gateway connection status line.
@@ -49,7 +49,7 @@ impl EditorState {
             menu_focus: 0,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: palette  Space: insert  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: palette  Space: insert  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
         }
@@ -215,7 +215,7 @@ pub fn render_menu(state: &EditorState) -> List<'static> {
     List::new(list_items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Menu (ESC closes)"),
+            .title("Menu (ESC opens/closes)"),
     )
 }
 
