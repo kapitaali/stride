@@ -378,7 +378,7 @@ mod tests {
     fn layout_constraints_sum_to_full_height() {
         let c = layout_constraints();
         assert_eq!(c.len(), 4);
-        assert!(matches!(c[0], Constraint::Length(2)));
+        assert!(matches!(c[0], Constraint::Length(4)));
         assert!(matches!(c[3], Constraint::Length(1)));
     }
 

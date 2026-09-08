@@ -49,18 +49,26 @@ impl GatewayClient {
     }
 
     fn roundtrip(&mut self, line: &str) -> std::io::Result<String> {
+        use std::io::Read;
         self.stream.write_all(line.as_bytes())?;
         self.stream.write_all(b"\n")?;
         self.stream.flush()?;
         let mut resp = String::new();
-        self.reader.read_line(&mut resp)?;
-        if resp.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionReset,
-                "gateway closed the connection",
-            ));
+        let mut buf = [0u8; 1];
+        loop {
+            let n = self.reader.read(&mut buf)?;
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "gateway closed the connection",
+                ));
+            }
+            if buf[0] == 0x1E {
+                break;
+            }
+            resp.push(buf[0] as char);
         }
-        Ok(resp.trim_end_matches(['\r', '\n']).to_string())
+        Ok(resp.trim_matches(['\r', '\n', ' ']).to_string())
     }
 
     /// Send one shared-variable command; parse the reply like `IpcClient` does.
@@ -69,15 +77,18 @@ impl GatewayClient {
         Ok(parse_response(&line))
     }
 
-    /// RIDE-style evaluation request. Returns the raw result line on success,
+    /// RIDE-style evaluation request. Returns the raw result text on success,
     /// or the server's `ERROR ...` text as `Err`.
     pub fn eval(&mut self, expr: &str) -> Result<String, String> {
         let line = self
             .roundtrip(&format!("EVAL {expr}"))
             .map_err(|e| format!("gateway I/O: {e}"))?;
-        match parse_response(&line) {
-            IpcResponse::Error(msg) => Err(msg),
-            other => Ok(other.to_string()),
+        if line.starts_with("ERROR ") {
+            Err(line[6..].to_string())
+        } else if line == "OK" {
+            Ok(String::new())
+        } else {
+            Ok(line)
         }
     }
 
