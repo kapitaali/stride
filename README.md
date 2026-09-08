@@ -124,7 +124,12 @@ Start the interpreter server first:
 cd ../rust-apl && cargo run -- --serve 4502
 ```
 
-The editor auto-connects on startup. Ctrl+E sends the current line to the server for evaluation. When the gateway is disconnected, Ctrl+E falls back to evaluating locally with `Environment::eval_line()`.
+The editor auto-connects on startup and performs the handshake:
+1. `SupportedProtocols=2` → `UsingProtocol=2`
+2. `["Identify", ...]` → `["ReplyIdentify", ...]`
+3. `["Connect", ...]` → `["ReplyConnect", ...]`
+
+Ctrl+E sends the current line to the server for evaluation. When the gateway is disconnected, Ctrl+E falls back to evaluating locally with `Environment::eval_line()`.
 
 ## Testing
 
