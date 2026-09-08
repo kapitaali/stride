@@ -59,6 +59,7 @@ cd ../rust-apl && cargo run -- --serve 4502
 | **Home / End** | Jump to start / end of line |
 | **Ctrl + E** | Evaluate the current line |
 | **Ctrl + S** | Save the current file |
+| **Ctrl + O** | Open file into new buffer |
 | **Ctrl + N** | New buffer (cycles after 9) |
 | **Ctrl + 1** – **Ctrl + 9** | Switch to buffer N |
 | **Ctrl + W** | Close current buffer |

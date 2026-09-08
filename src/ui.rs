@@ -30,6 +30,8 @@ pub struct EditorState {
     /// ESC menu open + which item is focused.
     pub menu_open: bool,
     pub menu_focus: usize,
+    /// File open dialog state.
+    pub dialog: Option<Dialog>,
     /// Gateway connection status line.
     pub gateway_status: String,
     /// Result pane lines (most recent last).
@@ -39,6 +41,12 @@ pub struct EditorState {
     /// ⎕IO / ⎕SEC snapshot for the status bar.
     pub io_label: String,
     pub sec_label: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum Dialog {
+    OpenFile { path: String },
+    SaveAs { path: String },
 }
 
 impl EditorState {
@@ -60,6 +68,7 @@ impl EditorState {
             palette_expanded: false,
             menu_open: false,
             menu_focus: 0,
+            dialog: None,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
             status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
@@ -379,6 +388,29 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
         frame.render_widget(Clear, area);
         frame.render_widget(menu, area);
     }
+
+    // File dialog overlay (open/save).
+    if let Some(dialog) = &state.dialog {
+        let w = 50u16;
+        let h = 5u16;
+        let area = centered_rect(w, h, frame.area());
+        frame.render_widget(Clear, area);
+        frame.render_widget(render_dialog(dialog), area);
+    }
+}
+
+/// Render the file open/save dialog overlay.
+fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
+    let (title, path) = match dialog {
+        Dialog::OpenFile { path } => ("Open File", path),
+        Dialog::SaveAs { path } => ("Save As", path),
+    };
+    let text = format!("{title}\n\n{path}_");
+    Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Enter path (Enter to confirm, ESC to cancel)"),
+    )
 }
 
 fn centered_rect(w: u16, h: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {

@@ -16,7 +16,7 @@ use ratatui::Terminal;
 use rust_apl_editor::config::EditorConfig;
 use rust_apl_editor::editor::Buffer;
 use rust_apl_editor::gateway::GatewayClient;
-use rust_apl_editor::ui::{self, EditorState};
+use rust_apl_editor::ui::{self, Dialog, EditorState};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -146,6 +146,10 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
 
         if event::poll(Duration::from_millis(150))? {
             if let Event::Key(key) = event::read()? {
+                if state.dialog.is_some() {
+                    handle_dialog_key(&mut state, key.code);
+                    continue;
+                }
                 if state.menu_open {
                     if handle_menu_key(&mut state, &mut gateway, key.code) {
                         break Ok(());
@@ -202,6 +206,12 @@ fn handle_key(
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
         },
+        (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
+            // Open file dialog
+            state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile {
+                path: String::new(),
+            });
+        }
         (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
             // New buffer / cycle
             if state.buffers.len() < 9 {
@@ -323,7 +333,7 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
             *state = EditorState::new(state.config.clone());
             state.status = "new buffer".to_string();
         }
-        1 => state.status = "Open: not wired to a file dialog yet".to_string(),
+        1 => state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile { path: String::new() }),
         2 => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
@@ -380,6 +390,48 @@ fn eval_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>, line:
                 state.push_result(format!("ERROR {rich}"));
                 state.status = "eval error".to_string();
             }
+        }
+    }
+}
+
+/// Handle keys when a dialog is open.
+fn handle_dialog_key(state: &mut EditorState, code: KeyCode) {
+    if let Some(dialog) = &mut state.dialog {
+        match code {
+            KeyCode::Esc => {
+                state.dialog = None;
+            }
+            KeyCode::Enter => {
+                // Confirm: load the file
+                if let Dialog::OpenFile { path } = state.dialog.take().unwrap() {
+                    if !path.is_empty() {
+                        let p = std::path::PathBuf::from(&path);
+                        match Buffer::open(&p) {
+                            Ok(buf) => {
+                                if state.buffers.len() < 9 {
+                                    state.buffers.push(buf);
+                                    state.active_buffer = state.buffers.len() - 1;
+                                } else {
+                                    state.buffers[state.active_buffer] = buf;
+                                }
+                                state.status = format!("opened {}", path);
+                            }
+                            Err(e) => state.status = format!("cannot open {}: {e}", path),
+                        }
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                if let Dialog::OpenFile { path } = dialog {
+                    path.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Dialog::OpenFile { path } = dialog {
+                    path.push(c);
+                }
+            }
+            _ => {}
         }
     }
 }
