@@ -24,10 +24,7 @@ Requires the sibling `rust-apl` interpreter at `../rust-apl/` (the gateway clien
 ## Running
 
 ```bash
-# Start the interpreter server (in a separate terminal)
-cd ../rust-apl && cargo run -- --serve 4502
-
-# Interactive TUI
+# Interactive TUI (auto-starts the gateway if not running)
 cargo run
 
 # Open a file directly
@@ -35,6 +32,13 @@ cargo run -- ~/Apps/rust-apl/examples/calc-demo.apl
 
 # Pipe mode (evaluate a script, print results)
 cargo run --quiet < demo.apl
+```
+
+The editor will automatically start the gateway executable if it's not already running on the configured port. You can also start it manually:
+
+```bash
+# Start the interpreter server (in a separate terminal)
+cd ../rust-apl && cargo run -- --serve 4502
 ```
 
 ## Controls
@@ -65,12 +69,14 @@ cargo run --quiet < demo.apl
 ```toml
 gateway_host = "127.0.0.1"
 gateway_port = 4502
-interpreter_path = "../rust-apl/target/debug/libapl.so"
+gateway_executable = "../rust-apl/target/debug/apl"
+gateway_args = "--serve"
 apl_version = "GNU APL 2.0 (Rust)"
-plugin_path = "../rust-apl/target/debug/libdemo_plugin.so"
 auto_connect = true
 max_results = 500
 ```
+
+The editor will automatically start `gateway_executable` if it's not already running on the configured port. You can also start it manually with `cargo run -- --serve 4502`.
 
 Missing fields fall back to RIDE-compatible defaults. A missing file is not an error — you get the defaults.
 
