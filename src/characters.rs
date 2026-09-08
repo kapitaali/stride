@@ -1,29 +1,39 @@
 //! APL character database: every glyph the palette can insert.
 //!
-//! Covers GNU APL 2.0 primitives, derived operators, quad names,
-//! Greek/alpha identifiers, box-drawing output glyphs, and the newer
-//! Dyalog extensions (insertable even where the interpreter still stubs them).
+//! The palette is organized into 11 rows by function. Each row is a
+//! logical group (arithmetic, comparison, logical, etc.) that the user
+//! cycles through with TAB.
 
 /// Category of an APL character (one palette row per category).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharCategory {
-    Primitive,
-    Operator,
-    Quad,
-    Greek,
-    BoxDraw,
-    Dyalog,
+    Assign,
+    Arithmetic,
+    Magnitude,
+    Compare,
+    Logical,
+    Structural,
+    Membership,
+    Catenate,
+    Operators,
+    Punctuation,
+    Misc,
 }
 
 impl CharCategory {
     pub fn title(self) -> &'static str {
         match self {
-            CharCategory::Primitive => "Primitives",
-            CharCategory::Operator => "Operators",
-            CharCategory::Quad => "Quad names",
-            CharCategory::Greek => "Greek / ids",
-            CharCategory::BoxDraw => "Box drawing",
-            CharCategory::Dyalog => "Dyalog ext",
+            CharCategory::Assign => "Assign / Struct",
+            CharCategory::Arithmetic => "Arithmetic",
+            CharCategory::Magnitude => "Magnitude / Encode",
+            CharCategory::Compare => "Compare",
+            CharCategory::Logical => "Logical",
+            CharCategory::Structural => "Structural",
+            CharCategory::Membership => "Membership / Index",
+            CharCategory::Catenate => "Catenate / Reshape",
+            CharCategory::Operators => "Operators",
+            CharCategory::Punctuation => "Punctuation / Greek",
+            CharCategory::Misc => "Misc",
         }
     }
 }
@@ -31,7 +41,7 @@ impl CharCategory {
 /// One palette entry: the text to insert plus a short human name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaletteEntry {
-    /// Text inserted into the buffer (usually one char, sometimes a ⎕ name).
+    /// Text inserted into the buffer (usually one char).
     pub glyph: &'static str,
     /// Short description shown in the status bar.
     pub name: &'static str,
@@ -56,165 +66,134 @@ macro_rules! row {
 /// All palette rows in TAB-cycle order.
 pub static PALETTE_ROWS: &[PaletteRow] = &[
     row!(
-        CharCategory::Primitive,
-        ("+", "plus"),
-        ("−", "minus (high)"),
-        ("-", "minus (ascii)"),
-        ("×", "times"),
-        ("÷", "divide"),
-        ("⌈", "ceiling/max"),
-        ("⌊", "floor/min"),
-        ("∣", "absolute/residue"),
-        ("⍳", "index gen/of"),
-        ("⍸", "where"),
-        ("?", "roll/deal"),
-        ("⋆", "power (alt)"),
-        ("*", "power/exp"),
-        ("⍟", "log"),
-        ("○", "circle/pi-times"),
-        ("!", "binomial/factorial"),
-        ("∧", "and/lcm"),
-        ("∨", "or/gcd"),
-        ("⍲", "nand"),
-        ("⍱", "nor"),
-        ("∼", "not/without"),
-        ("≠", "not-equal/unique"),
+        CharCategory::Assign,
+        ("←", "assignment"),
+        ("⇐", "global assign"),
+        ("⟦", "dfn open"),
+        ("⟧", "dfn close"),
+    ),
+    row!(
+        CharCategory::Arithmetic,
+        ("+", "plus / conjugate"),
+        ("-", "minus / negate"),
+        ("×", "times / sign"),
+        ("÷", "divide / reciprocal"),
+        ("*", "power / exp"),
+        ("⍟", "log / log-base"),
+        ("√", "sqrt"),
+        ("⌹", "matrix inv / divide"),
+        ("○", "circle / pi-times"),
+        ("!", "factorial / binomial"),
+        ("?", "roll / deal"),
+    ),
+    row!(
+        CharCategory::Magnitude,
+        ("|", "abs / residue"),
+        ("⌈", "ceiling / max"),
+        ("⌊", "floor / min"),
+        ("⊥", "decode"),
+        ("⊤", "encode"),
+        ("⊣", "left / same"),
+        ("⊢", "right / same"),
+        ("⌸", "key"),
+    ),
+    row!(
+        CharCategory::Compare,
+        ("=", "equal"),
+        ("≠", "not-equal / unique mask"),
         ("≤", "less-or-equal"),
         ("<", "less"),
-        ("=", "equal"),
         (">", "greater"),
         ("≥", "greater-or-equal"),
-        ("≡", "match/depth"),
-        ("≢", "not-match/tally"),
-        ("∊", "enlist/membership"),
-        ("⍷", "find"),
-        ("∪", "unique/union"),
-        ("∩", "intersection"),
-        ("⊃", "pick/disclose"),
-        ("⊂", "partition/enclose"),
-        ("↑", "take/mix"),
-        ("↓", "drop/split"),
-        ("⍪", "catenate-first/ravel"),
-        (",", "catenate/ravel"),
-        ("⍴", "reshape/shape"),
-        ("⌽", "reverse/rotate"),
-        ("⊖", "reverse-first"),
-        ("⍉", "transpose"),
+        ("≡", "match / depth"),
+        ("≢", "not-match / tally"),
+    ),
+    row!(
+        CharCategory::Logical,
+        ("∨", "or / gcd"),
+        ("∧", "and / lcm"),
+        ("⍲", "nand"),
+        ("⍱", "nor"),
+    ),
+    row!(
+        CharCategory::Structural,
+        ("↑", "take / mix"),
+        ("↓", "drop / split"),
+        ("⊂", "enclose / partition"),
+        ("⊃", "disclose / pick"),
+        ("⊆", "nest / partition-enclose"),
+        ("⊇", "first-pick (quad)"),
+        ("⌷", "index"),
         ("⍋", "grade up"),
         ("⍒", "grade down"),
+        ("≬", "grade up variant"),
+        ("⫇", "grade down variant"),
+    ),
+    row!(
+        CharCategory::Membership,
+        ("⍳", "index gen / of"),
+        ("⍸", "where / interval-index"),
+        ("∊", "membership / enlist"),
+        ("⍷", "find"),
+        ("∪", "unique / union"),
+        ("∩", "intersection"),
+        ("~", "not / without"),
+        ("/", "reduce / compress"),
+        ("\\", "scan / expand"),
+        ("⌿", "reduce-first"),
+        ("⍀", "scan-first"),
+        ("…", "ellipsis"),
+    ),
+    row!(
+        CharCategory::Catenate,
+        (",", "catenate / ravel"),
+        ("⍪", "catenate-first"),
+        ("⍮", "pair / 2-elem"),
+        ("⍴", "reshape / shape"),
+        ("⌽", "reverse / rotate"),
+        ("⊖", "reverse-first"),
+        ("⍉", "transpose"),
+    ),
+    row!(
+        CharCategory::Operators,
+        ("¨", "each"),
+        ("⍨", "commute / swap"),
+        ("⍣", "power operator"),
+        ("∙", "inner product (alt)"),
+        ("⌻", "inner product variant"),
+        ("˝", "variant"),
+        ("∘", "compose / ring"),
+        ("⍛", "compose-back"),
+        ("⍤", "atop / bind"),
+        ("⍥", "over"),
+        ("⍢", "under (alt)"),
+        ("⍫", "lock"),
+        ("∵", "because"),
+        ("∥", "parallel"),
+        ("λ", "lambda (dfn)"),
+        ("⍞", "char input"),
         ("⍎", "execute"),
         ("⍕", "format"),
-        ("⊤", "encode"),
-        ("⊥", "decode"),
-        ("⊣", "left"),
-        ("⊢", "right"),
-        ("⍺", "left arg"),
-        ("⍵", "right arg"),
+        ("⍰", "null / placeholder"),
+    ),
+    row!(
+        CharCategory::Punctuation,
+        ("«", "digraph open"),
+        ("»", "digraph close"),
+        ("⋄", "statement separator"),
         ("⍝", "comment"),
-        ("⋄", "statement sep"),
-        ("←", "assignment"),
+        ("→", "branch"),
+        ("⍵", "omega / right arg"),
+        ("⍺", "alpha / left arg"),
+        ("∇", "dfn editor"),
+        ("⍓", "quad input"),
     ),
     row!(
-        CharCategory::Operator,
-        ("¨", "each"),
-        ("⍨", "commute/swap"),
-        ("˙", "jot (dop)"),
-        ("∘", "ring/product (GNU: +.× equiv)"),
-        (".", "inner/outer product"),
-        ("⍣", "power operator"),
-        ("/", "reduce/compress"),
-        ("⌿", "reduce-first"),
-        ("\\", "scan/expand"),
-        ("⍀", "scan-first"),
-        ("⍤", "atop (dop)"),
-        ("⍥", "over (dop)"),
-        ("@", "at (dop)"),
-        ("⌸", "key"),
-        ("⍩", "quad-diamond (dfn guard)"),
-        ("⍤", "bind (dop)"),
-    ),
-    row!(
-        CharCategory::Quad,
-        ("⎕IO", "index origin"),
-        ("⎕PP", "print precision"),
-        ("⎕A", "uppercase alphabet"),
-        ("⎕D", "digits"),
-        ("⎕PW", "page width"),
-        ("⎕LX", "latent expression"),
-        ("⎕EM", "event message"),
-        ("⎕EC", "event code"),
-        ("⎕WI", "window interface"),
-        ("⎕SEC", "security level"),
-        ("⎕FIO", "file I/O"),
-        ("⎕SV", "shared variables"),
-        ("⎕EA", "execute alternate"),
-        ("⎕ES", "event signal"),
-        ("⎕TS", "timestamp"),
-        ("⎕TV", "token vector"),
-        ("⎕CR", "canonical rep"),
-        ("⎕FX", "fix function"),
-        ("⎕EX", "expunge"),
-        ("⎕NC", "name class"),
-        ("⎕NL", "name list"),
-        ("⎕NS", "namespace"),
-        ("⎕CS", "current space"),
-        ("⎕PLOT", "plot (ext)"),
-        ("⎕PNG", "png (ext)"),
-        ("⎕FFT", "fft (ext)"),
-        ("⎕SQL", "sql (ext)"),
-        ("⎕RE", "regex (ext)"),
-        ("⎕CDR", "cdr (ext)"),
-        ("⎕INP", "input"),
-        ("⎕OUT", "output"),
-    ),
-    row!(
-        CharCategory::Greek,
-        ("⍺", "alpha"),
-        ("⍵", "omega"),
-        ("⍺⍺", "left operand"),
-        ("⍵⍵", "right operand"),
+        CharCategory::Misc,
+        ("¯", "high minus"),
+        ("⍬", "zilde / empty"),
         ("∆", "delta (in names)"),
         ("⍙", "delta-underbar"),
-        ("_", "underscore"),
-    ),
-    row!(
-        CharCategory::BoxDraw,
-        ("─", "h-line"),
-        ("│", "v-line"),
-        ("┌", "down-right"),
-        ("┐", "down-left"),
-        ("└", "up-right"),
-        ("┘", "up-left"),
-        ("├", "v-right"),
-        ("┤", "v-left"),
-        ("┬", "h-down"),
-        ("┴", "h-up"),
-        ("┼", "cross"),
-        ("═", "h-double"),
-        ("║", "v-double"),
-        ("◇", "diamond"),
-        ("○", "circle"),
-    ),
-    row!(
-        CharCategory::Dyalog,
-        ("⍥", "over"),
-        ("⌸", "key"),
-        ("⊥", "decode"),
-        ("⊤", "encode"),
-        ("⊆", "nest/partitioned-enclose"),
-        ("⊇", "first-pick (quad)"),
-        ("⍷", "find"),
-        ("⍸", "where/interval-index"),
-        ("⍉", "transpose"),
-        ("⌺", "stencil"),
-        ("⍠", "variant"),
-        ("⌾", "atop-under (under)"),
-        ("⍤", "atop/bind"),
-        ("⍣", "power"),
-        ("⍢", "under (dop)"),
-        ("⍤", "j-diamond"),
-        ("∩", "intersection"),
-        ("∪", "union"),
     ),
 ];
 
@@ -252,18 +231,26 @@ mod tests {
     }
 
     #[test]
-    fn core_primitives_present() {
-        let prims: HashSet<&str> = PALETTE_ROWS[0].entries.iter().map(|e| e.glyph).collect();
-        for g in ["⍳", "⍴", "←", "⍝", "⋄", "≡", "≢", "∊", "⍋", "⍒"] {
-            assert!(prims.contains(g), "missing primitive {g}");
+    fn all_user_glyphs_present() {
+        // Every glyph the user specified must appear somewhere in the palette.
+        let wanted = [
+            "←", "⇐", "⟦", "⟧", "+", "-", "×", "÷", "*", "⍟", "√", "⌹", "○", "!", "?",
+            "|", "⌈", "⌊", "⊥", "⊤", "⊣", "⊢", "⌸", "=", "≠", "≤", "<", ">", "≥", "≡", "≢",
+            "∨", "∧", "⍲", "⍱", "↑", "↓", "⊂", "⊃", "⊆", "⊇", "⌷", "⍋", "⍒", "≬", "⫇",
+            "⍳", "⍸", "∊", "⍷", "∪", "∩", "~", "/", "\\", "⌿", "⍀", "…",
+            ",", "⍪", "⍮", "⍴", "⌽", "⊖", "⍉",
+            "¨", "⍨", "⍣", "∙", "⌻", "˝", "∘", "⍛", "⍤", "⍥", "⍢", "⍫", "∵", "∥", "λ", "⍞", "⍎", "⍕", "⍰",
+            "«", "»", "⋄", "⍝", "→", "⍵", "⍺", "∇", "⍓",
+            "¯", "⍬", "∆", "⍙",
+        ];
+        let mut present = HashSet::new();
+        for r in PALETTE_ROWS {
+            for e in r.entries {
+                present.insert(e.glyph);
+            }
         }
-    }
-
-    #[test]
-    fn quad_row_has_apl_names() {
-        let quads: HashSet<&str> = PALETTE_ROWS[2].entries.iter().map(|e| e.glyph).collect();
-        for g in ["⎕IO", "⎕PP", "⎕SEC", "⎕FIO", "⎕A", "⎕D"] {
-            assert!(quads.contains(g), "missing quad {g}");
+        for g in wanted {
+            assert!(present.contains(g), "missing glyph: {g}");
         }
     }
 
@@ -275,5 +262,10 @@ mod tests {
                 assert!(!e.name.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn eleven_rows() {
+        assert_eq!(PALETTE_ROWS.len(), 11);
     }
 }

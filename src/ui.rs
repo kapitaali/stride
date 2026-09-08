@@ -80,12 +80,17 @@ pub fn layout_constraints() -> [Constraint; 4] {
 
 fn palette_style(cat: CharCategory) -> Style {
     match cat {
-        CharCategory::Primitive => Style::default().fg(Color::Yellow),
-        CharCategory::Operator => Style::default().fg(Color::Cyan),
-        CharCategory::Quad => Style::default().fg(Color::Green),
-        CharCategory::Greek => Style::default().fg(Color::Magenta),
-        CharCategory::BoxDraw => Style::default().fg(Color::Blue),
-        CharCategory::Dyalog => Style::default().fg(Color::Red),
+        CharCategory::Assign => Style::default().fg(Color::Yellow),
+        CharCategory::Arithmetic => Style::default().fg(Color::Cyan),
+        CharCategory::Magnitude => Style::default().fg(Color::Green),
+        CharCategory::Compare => Style::default().fg(Color::Magenta),
+        CharCategory::Logical => Style::default().fg(Color::Blue),
+        CharCategory::Structural => Style::default().fg(Color::Red),
+        CharCategory::Membership => Style::default().fg(Color::LightCyan),
+        CharCategory::Catenate => Style::default().fg(Color::LightGreen),
+        CharCategory::Operators => Style::default().fg(Color::LightMagenta),
+        CharCategory::Punctuation => Style::default().fg(Color::LightBlue),
+        CharCategory::Misc => Style::default().fg(Color::LightRed),
     }
 }
 
@@ -342,7 +347,8 @@ mod tests {
     fn focused_entry_name_for_default_state() {
         let s = sample_state();
         let name = focused_entry_name(&s);
-        assert!(name.contains("plus"));
+        // Default row is "Assign"; first entry is ← = assignment
+        assert!(name.contains("assignment"));
     }
 
     #[test]
