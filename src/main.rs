@@ -166,6 +166,10 @@ fn handle_key(
             state.palette_col = 0;
             state.status = rust_apl_editor::ui::focused_entry_name(state);
         }
+        // Ctrl+TAB toggles expanded palette (5 rows).
+        (KeyCode::BackTab, KeyModifiers::CONTROL) => {
+            state.palette_expanded = !state.palette_expanded;
+        }
         (KeyCode::BackTab, _) => {
             let n = rust_apl_editor::characters::row_count();
             state.palette_row = (state.palette_row + n - 1) % n;

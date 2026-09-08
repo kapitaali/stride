@@ -42,6 +42,7 @@ cargo run --quiet < demo.apl
 | Key | Action |
 |-----|--------|
 | **TAB** | Cycle palette row (category) |
+| **Ctrl + TAB** | Toggle expanded palette (5 rows) |
 | **Left / Right** | Move text cursor horizontally |
 | **Ctrl + Left / Right** | Select glyph within the palette row |
 | **Ctrl + Space** | Insert the focused glyph at the cursor |

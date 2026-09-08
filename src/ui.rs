@@ -24,6 +24,8 @@ pub struct EditorState {
     pub palette_row: usize,
     /// Currently selected entry within the row.
     pub palette_col: usize,
+    /// Palette expanded to show 5 rows at once (Ctrl+TAB toggles).
+    pub palette_expanded: bool,
     /// ESC menu open + which item is focused.
     pub menu_open: bool,
     pub menu_focus: usize,
@@ -45,11 +47,12 @@ impl EditorState {
             config,
             palette_row: 0,
             palette_col: 0,
+            palette_expanded: false,
             menu_open: false,
             menu_focus: 0,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+TAB: expand  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
         }
@@ -69,12 +72,13 @@ impl EditorState {
 }
 
 /// Top-level layout constraints (ratatui `Constraint`s), shared by draw + tests.
-pub fn layout_constraints() -> [Constraint; 4] {
-    [
-        Constraint::Length(4), // palette row (border + 2 content lines for wrapping)
-        Constraint::Min(4),    // editor
-        Constraint::Length(6), // result pane
-        Constraint::Length(1), // status bar
+/// `palette_rows` is 1 normally, or 5 when expanded.
+pub fn layout_constraints(palette_rows: usize) -> Vec<Constraint> {
+    vec![
+        Constraint::Length(palette_rows as u16), // palette
+        Constraint::Min(4),                      // editor
+        Constraint::Length(6),                   // result pane
+        Constraint::Length(1),                   // status bar
     ]
 }
 
@@ -110,32 +114,77 @@ fn token_style(kind: TokenKind) -> Style {
     }
 }
 
-/// Build the palette row widget for the current state.
+/// Build the palette widget. Shows 1 row normally, or 5 rows when expanded.
 pub fn render_palette(state: &EditorState) -> Paragraph<'static> {
-    let row = state.palette();
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(
-        format!(" {}: ", row.category.title()),
-        Style::default().add_modifier(Modifier::BOLD),
-    ));
-    for (i, entry) in row.entries.iter().enumerate() {
-        let style = palette_style(row.category);
-        let focused = i == state.palette_col;
-        let s = if focused {
-            style
-                .bg(Color::White)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            style
-        };
-        spans.push(Span::styled(format!(" {} ", entry.glyph), s));
+    let mut lines: Vec<Line> = Vec::new();
+
+    if state.palette_expanded {
+        // Show 5 rows centered on the current selection.
+        let row_count = characters::row_count();
+        let start = state.palette_row.saturating_sub(2);
+        let end = (start + 5).min(row_count);
+        let actual_start = end.saturating_sub(5);
+
+        for r in actual_start..end {
+            let row = characters::row(r);
+            let is_current = r == state.palette_row;
+            let mut spans: Vec<Span> = Vec::new();
+            spans.push(Span::styled(
+                format!(" {}: ", row.category.title()),
+                if is_current {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ));
+            for (i, entry) in row.entries.iter().enumerate() {
+                let style = palette_style(row.category);
+                let focused = is_current && i == state.palette_col;
+                let s = if focused {
+                    style
+                        .bg(Color::White)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_current {
+                    style
+                } else {
+                    style.fg(Color::DarkGray)
+                };
+                spans.push(Span::styled(format!(" {} ", entry.glyph), s));
+            }
+            lines.push(Line::from(spans));
+        }
+    } else {
+        // Single row view.
+        let row = state.palette();
+        let mut spans: Vec<Span> = Vec::new();
+        spans.push(Span::styled(
+            format!(" {}: ", row.category.title()),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        for (i, entry) in row.entries.iter().enumerate() {
+            let style = palette_style(row.category);
+            let focused = i == state.palette_col;
+            let s = if focused {
+                style
+                    .bg(Color::White)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                style
+            };
+            spans.push(Span::styled(format!(" {} ", entry.glyph), s));
+        }
+        lines.push(Line::from(spans));
     }
-    Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL).title(format!(
-        "Palette (row {}/{})",
-        state.palette_row + 1,
-        characters::row_count()
-    )))
+
+    let title = if state.palette_expanded {
+        "Palette (expanded — Ctrl+TAB to collapse)".to_string()
+    } else {
+        format!("Palette (row {}/{})", state.palette_row + 1, characters::row_count())
+    };
+
+    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title))
 }
 
 /// Build the editor widget with per-token syntax highlighting.
@@ -272,7 +321,8 @@ pub fn menu_item_count() -> usize {
 pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     use ratatui::layout::Layout;
 
-    let chunks = Layout::vertical(layout_constraints()).split(frame.area());
+    let palette_rows = if state.palette_expanded { 5 } else { 1 };
+    let chunks = Layout::vertical(layout_constraints(palette_rows)).split(frame.area());
     frame.render_widget(render_palette(state), chunks[0]);
     frame.render_widget(render_editor(state), chunks[1]);
     frame.render_widget(render_results(state), chunks[2]);
@@ -376,10 +426,17 @@ mod tests {
 
     #[test]
     fn layout_constraints_sum_to_full_height() {
-        let c = layout_constraints();
+        let c = layout_constraints(1);
         assert_eq!(c.len(), 4);
-        assert!(matches!(c[0], Constraint::Length(4)));
+        assert!(matches!(c[0], Constraint::Length(1)));
         assert!(matches!(c[3], Constraint::Length(1)));
+    }
+
+    #[test]
+    fn layout_constraints_expanded() {
+        let c = layout_constraints(5);
+        assert_eq!(c.len(), 4);
+        assert!(matches!(c[0], Constraint::Length(5)));
     }
 
     #[test]
