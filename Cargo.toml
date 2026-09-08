@@ -1,15 +1,15 @@
 [package]
-name = "rust-apl-editor"
+name = "stride"
 version = "0.1.0"
 edition = "2021"
 description = "Terminal APL editor (TUI) with RIDE-compatible gateway to the rust-apl interpreter"
 
 [[bin]]
-name = "apl-editor"
+name = "stride"
 path = "src/main.rs"
 
 [lib]
-name = "rust_apl_editor"
+name = "stride"
 path = "src/lib.rs"
 
 [dependencies]

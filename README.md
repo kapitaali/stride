@@ -1,4 +1,4 @@
-# rust-apl-editor
+# stride
 
 A terminal-based APL editor with a full TUI, built in Rust. Write APL code with syntax highlighting, browse a searchable character palette, and evaluate expressions through a RIDE-compatible gateway to the [rust-apl](https://github.com/nousresearch/rust-apl) interpreter.
 
@@ -15,7 +15,7 @@ A terminal-based APL editor with a full TUI, built in Rust. Write APL code with 
 ## Building
 
 ```bash
-cd ~/Apps/rust-apl-editor
+cd ~/Apps/stride
 cargo build --release
 ```
 

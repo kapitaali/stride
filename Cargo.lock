@@ -2207,18 +2207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-apl-editor"
-version = "0.1.0"
-dependencies = [
- "apl",
- "crossterm",
- "ratatui",
- "serde",
- "serde_json",
- "toml 0.8.23",
-]
-
-[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2429,6 +2417,18 @@ name = "strength_reduce"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
+
+[[package]]
+name = "stride"
+version = "0.1.0"
+dependencies = [
+ "apl",
+ "crossterm",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
 
 [[package]]
 name = "strsim"

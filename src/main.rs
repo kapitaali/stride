@@ -13,10 +13,10 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use rust_apl_editor::config::EditorConfig;
-use rust_apl_editor::editor::Buffer;
-use rust_apl_editor::gateway::GatewayClient;
-use rust_apl_editor::ui::{self, Dialog, EditorState};
+use stride::config::EditorConfig;
+use stride::editor::Buffer;
+use stride::gateway::GatewayClient;
+use stride::ui::{self, Dialog, EditorState};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -62,7 +62,7 @@ fn run_pipe_mode(config: &EditorConfig) {
                         println!("{l}");
                     }
                 } else {
-                    println!("{}", rust_apl_editor::ui::format_value_for(&v, pp));
+                    println!("{}", stride::ui::format_value_for(&v, pp));
                 }
             }
             Ok(None) => {}
@@ -173,7 +173,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
 
 /// Spawn the gateway executable. Returns when the process has been launched
 /// (not when it's ready to accept connections).
-fn spawn_gateway(config: &rust_apl_editor::config::EditorConfig) -> std::io::Result<()> {
+fn spawn_gateway(config: &stride::config::EditorConfig) -> std::io::Result<()> {
     use std::process::Command;
 
     let exec = &config.gateway_executable;
@@ -208,7 +208,7 @@ fn handle_key(
         },
         (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
             // Open file dialog
-            state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile {
+            state.dialog = Some(stride::ui::Dialog::OpenFile {
                 path: String::new(),
                 cursor: 0,
                 files: list_files_for_path(""),
@@ -253,19 +253,19 @@ fn handle_key(
         // Terminal sends Ctrl+H (0x08) for Backspace on some setups; treat it as Backspace.
         (KeyCode::Char('h'), KeyModifiers::CONTROL) => state.buffer_mut().backspace(),
         (KeyCode::Tab, _) => {
-            state.palette_row = (state.palette_row + 1) % rust_apl_editor::characters::row_count();
+            state.palette_row = (state.palette_row + 1) % stride::characters::row_count();
             state.palette_col = 0;
-            state.status = rust_apl_editor::ui::focused_entry_name(state);
+            state.status = stride::ui::focused_entry_name(state);
         }
         // Ctrl+P toggles expanded palette (5 rows).
         (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
             state.palette_expanded = !state.palette_expanded;
         }
         (KeyCode::BackTab, _) => {
-            let n = rust_apl_editor::characters::row_count();
+            let n = stride::characters::row_count();
             state.palette_row = (state.palette_row + n - 1) % n;
             state.palette_col = 0;
-            state.status = rust_apl_editor::ui::focused_entry_name(state);
+            state.status = stride::ui::focused_entry_name(state);
         }
         (KeyCode::Right, KeyModifiers::NONE) => state.buffer_mut().move_right(),
         (KeyCode::Left, KeyModifiers::NONE) => state.buffer_mut().move_left(),
@@ -273,12 +273,12 @@ fn handle_key(
         (KeyCode::Right, KeyModifiers::CONTROL) => {
             let len = state.palette().entries.len();
             state.palette_col = (state.palette_col + 1) % len;
-            state.status = rust_apl_editor::ui::focused_entry_name(state);
+            state.status = stride::ui::focused_entry_name(state);
         }
         (KeyCode::Left, KeyModifiers::CONTROL) => {
             let len = state.palette().entries.len();
             state.palette_col = (state.palette_col + len - 1) % len;
-            state.status = rust_apl_editor::ui::focused_entry_name(state);
+            state.status = stride::ui::focused_entry_name(state);
         }
         (KeyCode::Enter, KeyModifiers::NONE) => state.buffer_mut().insert_newline(),
         // Ctrl+Space inserts the focused palette glyph; Space is a normal space.
@@ -314,9 +314,9 @@ fn handle_menu_key(
 ) -> bool {
     match code {
         KeyCode::Esc => state.menu_open = false,
-        KeyCode::Down => state.menu_focus = (state.menu_focus + 1) % rust_apl_editor::ui::menu_item_count(),
+        KeyCode::Down => state.menu_focus = (state.menu_focus + 1) % stride::ui::menu_item_count(),
         KeyCode::Up => {
-            let n = rust_apl_editor::ui::menu_item_count();
+            let n = stride::ui::menu_item_count();
             state.menu_focus = (state.menu_focus + n - 1) % n;
         }
         KeyCode::Enter => {
@@ -336,7 +336,7 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
             state.status = "new buffer".to_string();
         }
         1 => {
-            state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile {
+            state.dialog = Some(stride::ui::Dialog::OpenFile {
                 path: String::new(),
                 cursor: 0,
                 files: list_files_for_path(""),
@@ -388,7 +388,7 @@ fn eval_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>, line:
         match env.eval_line(line) {
             Ok(Some(v)) => {
                 let pp = apl::sysvars::get_pp(&env).unwrap_or(10);
-                let text = rust_apl_editor::ui::format_value_for(&v, pp);
+                let text = stride::ui::format_value_for(&v, pp);
                 state.push_result(text);
                 state.status = "evaluated locally".to_string();
             }

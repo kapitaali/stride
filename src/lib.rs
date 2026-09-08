@@ -1,4 +1,4 @@
-//! rust-apl-editor library root: the TUI editor's reusable modules.
+//! stride library root: the TUI editor's reusable modules.
 
 pub mod characters;
 pub mod config;
