@@ -147,7 +147,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         if event::poll(Duration::from_millis(150))? {
             if let Event::Key(key) = event::read()? {
                 if state.dialog.is_some() {
-                    handle_dialog_key(&mut state, key.code);
+                    handle_dialog_key(&mut state, key.code, key.modifiers);
                     continue;
                 }
                 if state.menu_open {
@@ -210,6 +210,8 @@ fn handle_key(
             // Open file dialog
             state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile {
                 path: String::new(),
+                cursor: 0,
+                files: list_files_for_path(""),
             });
         }
         (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
@@ -333,7 +335,13 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
             *state = EditorState::new(state.config.clone());
             state.status = "new buffer".to_string();
         }
-        1 => state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile { path: String::new() }),
+        1 => {
+            state.dialog = Some(rust_apl_editor::ui::Dialog::OpenFile {
+                path: String::new(),
+                cursor: 0,
+                files: list_files_for_path(""),
+            })
+        }
         2 => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
@@ -395,17 +403,34 @@ fn eval_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>, line:
 }
 
 /// Handle keys when a dialog is open.
-fn handle_dialog_key(state: &mut EditorState, code: KeyCode) {
+fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
         match code {
             KeyCode::Esc => {
                 state.dialog = None;
             }
             KeyCode::Enter => {
-                // Confirm: load the file
-                if let Dialog::OpenFile { path } = state.dialog.take().unwrap() {
-                    if !path.is_empty() {
-                        let p = std::path::PathBuf::from(&path);
+                if let Dialog::OpenFile { path, cursor, files } = dialog {
+                    // If a file is selected in the list, use that
+                    if !files.is_empty() && *cursor < files.len() {
+                        let selected = files[*cursor].clone();
+                        let p = std::path::PathBuf::from(&selected);
+                        match Buffer::open(&p) {
+                            Ok(buf) => {
+                                if state.buffers.len() < 9 {
+                                    state.buffers.push(buf);
+                                    state.active_buffer = state.buffers.len() - 1;
+                                } else {
+                                    state.buffers[state.active_buffer] = buf;
+                                }
+                                state.status = format!("opened {}", selected);
+                            }
+                            Err(e) => state.status = format!("cannot open {}: {e}", selected),
+                        }
+                        state.dialog = None;
+                    } else if !path.is_empty() {
+                        // Use typed path
+                        let p = std::path::PathBuf::from(path.clone());
                         match Buffer::open(&p) {
                             Ok(buf) => {
                                 if state.buffers.len() < 9 {
@@ -418,20 +443,83 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode) {
                             }
                             Err(e) => state.status = format!("cannot open {}: {e}", path),
                         }
+                        state.dialog = None;
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if let Dialog::OpenFile { cursor, .. } = dialog {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let Dialog::OpenFile { cursor, files, .. } = dialog {
+                    if *cursor + 1 < files.len() {
+                        *cursor += 1;
                     }
                 }
             }
             KeyCode::Backspace => {
-                if let Dialog::OpenFile { path } = dialog {
+                if let Dialog::OpenFile { path, cursor, files } = dialog {
                     path.pop();
+                    // Refresh file list based on new path
+                    *files = list_files_for_path(path);
+                    *cursor = 0;
+                }
+            }
+            KeyCode::Char('h') if mods == KeyModifiers::CONTROL => {
+                if let Dialog::OpenFile { path, cursor, files } = dialog {
+                    path.pop();
+                    *files = list_files_for_path(path);
+                    *cursor = 0;
                 }
             }
             KeyCode::Char(c) => {
-                if let Dialog::OpenFile { path } = dialog {
+                if let Dialog::OpenFile { path, cursor, files } = dialog {
                     path.push(c);
+                    // Refresh file list based on new path
+                    *files = list_files_for_path(path);
+                    *cursor = 0;
                 }
             }
             _ => {}
         }
     }
+}
+
+/// List files in the directory specified by path.
+/// If path is empty or doesn't end with /, lists current directory.
+fn list_files_for_path(path: &str) -> Vec<String> {
+    use std::path::Path;
+
+    let dir = if path.is_empty() {
+        Path::new(".")
+    } else if path.ends_with('/') {
+        Path::new(path)
+    } else if let Some(parent) = Path::new(path).parent() {
+        parent
+    } else {
+        Path::new(".")
+    };
+
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                if name.starts_with('.') {
+                    continue; // skip hidden files
+                }
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                if is_dir {
+                    files.push(format!("{}/", name));
+                } else {
+                    files.push(name);
+                }
+            }
+        }
+    }
+    files.sort();
+    files
 }

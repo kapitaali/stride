@@ -45,8 +45,14 @@ pub struct EditorState {
 
 #[derive(Debug, Clone)]
 pub enum Dialog {
-    OpenFile { path: String },
-    SaveAs { path: String },
+    OpenFile {
+        path: String,
+        cursor: usize,        // selected file index
+        files: Vec<String>,   // files in current directory
+    },
+    SaveAs {
+        path: String,
+    },
 }
 
 impl EditorState {
@@ -401,16 +407,43 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
 
 /// Render the file open/save dialog overlay.
 fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
-    let (title, path) = match dialog {
-        Dialog::OpenFile { path } => ("Open File", path),
-        Dialog::SaveAs { path } => ("Save As", path),
-    };
-    let text = format!("{title}\n\n{path}_");
-    Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Enter path (Enter to confirm, ESC to cancel)"),
-    )
+    match dialog {
+        Dialog::OpenFile { path, cursor, files } => {
+            let mut text = String::new();
+            text.push_str("Open File\n\n");
+            text.push_str("Path: ");
+            text.push_str(path);
+            text.push_str("_\n\n");
+
+            if files.is_empty() {
+                text.push_str("(no files in directory)");
+            } else {
+                for (i, file) in files.iter().enumerate() {
+                    if i == *cursor {
+                        text.push_str("  ▶ ");
+                    } else {
+                        text.push_str("    ");
+                    }
+                    text.push_str(file);
+                    text.push('\n');
+                }
+            }
+
+            Paragraph::new(text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Open File (↑↓ to navigate, Enter to open, ESC to cancel)"),
+            )
+        }
+        Dialog::SaveAs { path } => {
+            let text = format!("Save As\n\n{path}_");
+            Paragraph::new(text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Enter path (Enter to confirm, ESC to cancel)"),
+            )
+        }
+    }
 }
 
 fn centered_rect(w: u16, h: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
