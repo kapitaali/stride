@@ -24,6 +24,9 @@ Requires the sibling `rust-apl` interpreter at `../rust-apl/` (the gateway clien
 ## Running
 
 ```bash
+# Start the interpreter server (in a separate terminal)
+cd ../rust-apl && cargo run -- --serve 4502
+
 # Interactive TUI
 cargo run
 
@@ -107,7 +110,13 @@ src/
 
 ## Integration with rust-apl
 
-The editor connects to the rust-apl interpreter as a gateway client on port 4502 (same protocol as RIDE). It reuses the `apl::ipc::protocol` types (`IpcCommand`, `IpcResponse`) so the two sides cannot drift apart. When the gateway is disconnected, Ctrl+E falls back to evaluating locally with `Environment::eval_line()`.
+The editor connects to the rust-apl interpreter as a gateway client on port 4502 (same protocol as RIDE). Start the interpreter server first:
+
+```bash
+cd ../rust-apl && cargo run -- --serve 4502
+```
+
+The editor auto-connects on startup. Ctrl+E sends the current line to the server for evaluation. When the gateway is disconnected, Ctrl+E falls back to evaluating locally with `Environment::eval_line()`.
 
 ## Testing
 
