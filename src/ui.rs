@@ -397,8 +397,10 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
 
     // File dialog overlay (open/save).
     if let Some(dialog) = &state.dialog {
-        let w = 50u16;
-        let h = 5u16;
+        let (w, h) = match dialog {
+            Dialog::OpenFile { files, .. } => (50u16, (files.len() + 6).max(8) as u16),
+            Dialog::SaveAs { .. } => (50u16, 5u16),
+        };
         let area = centered_rect(w, h, frame.area());
         frame.render_widget(Clear, area);
         frame.render_widget(render_dialog(dialog), area);

@@ -411,26 +411,41 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers)
             }
             KeyCode::Enter => {
                 if let Dialog::OpenFile { path, cursor, files } = dialog {
-                    // If a file is selected in the list, use that
-                    if !files.is_empty() && *cursor < files.len() {
-                        let selected = files[*cursor].clone();
-                        let p = std::path::PathBuf::from(&selected);
-                        match Buffer::open(&p) {
-                            Ok(buf) => {
-                                if state.buffers.len() < 9 {
-                                    state.buffers.push(buf);
-                                    state.active_buffer = state.buffers.len() - 1;
-                                } else {
-                                    state.buffers[state.active_buffer] = buf;
-                                }
-                                state.status = format!("opened {}", selected);
+                    // Determine what to open/navigate
+                    let selected = if !files.is_empty() && *cursor < files.len() {
+                        Some(files[*cursor].clone())
+                    } else {
+                        None
+                    };
+
+                    // Prepend current directory to selected file name
+                    let target = match &selected {
+                        Some(name) => {
+                            if path.ends_with('/') {
+                                format!("{path}{name}")
+                            } else {
+                                format!("{path}/{name}")
                             }
-                            Err(e) => state.status = format!("cannot open {}: {e}", selected),
                         }
-                        state.dialog = None;
-                    } else if !path.is_empty() {
-                        // Use typed path
-                        let p = std::path::PathBuf::from(path.clone());
+                        None => path.clone(),
+                    };
+
+                    if target.is_empty() {
+                        return;
+                    }
+
+                    let p = std::path::PathBuf::from(&target);
+                    if p.is_dir() || target.ends_with('/') {
+                        // Navigate into directory
+                        let mut new_path = target;
+                        if !new_path.ends_with('/') {
+                            new_path.push('/');
+                        }
+                        *path = new_path;
+                        *files = list_files_for_path(path);
+                        *cursor = 0;
+                    } else {
+                        // Open file
                         match Buffer::open(&p) {
                             Ok(buf) => {
                                 if state.buffers.len() < 9 {
@@ -439,9 +454,9 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers)
                                 } else {
                                     state.buffers[state.active_buffer] = buf;
                                 }
-                                state.status = format!("opened {}", path);
+                                state.status = format!("opened {}", target);
                             }
-                            Err(e) => state.status = format!("cannot open {}: {e}", path),
+                            Err(e) => state.status = format!("cannot open {}: {e}", target),
                         }
                         state.dialog = None;
                     }
@@ -490,16 +505,25 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers)
 }
 
 /// List files in the directory specified by path.
-/// If path is empty or doesn't end with /, lists current directory.
+/// If path is empty, lists current directory.
+/// If path points to a directory, lists that directory.
+/// Otherwise, lists the parent directory of the path.
 fn list_files_for_path(path: &str) -> Vec<String> {
     use std::path::Path;
 
+    let p = Path::new(path);
     let dir = if path.is_empty() {
         Path::new(".")
+    } else if p.is_dir() {
+        p
     } else if path.ends_with('/') {
-        Path::new(path)
-    } else if let Some(parent) = Path::new(path).parent() {
-        parent
+        p
+    } else if let Some(parent) = p.parent() {
+        if parent.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            parent
+        }
     } else {
         Path::new(".")
     };
