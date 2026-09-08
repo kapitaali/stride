@@ -42,8 +42,10 @@ cargo run --quiet < demo.apl
 | Key | Action |
 |-----|--------|
 | **TAB** | Cycle palette row (category) |
-| **Left / Right** | Select glyph within the row |
-| **Space** | Insert the focused glyph at the cursor |
+| **Left / Right** | Move text cursor horizontally |
+| **Ctrl + Left / Right** | Select glyph within the palette row |
+| **Ctrl + Space** | Insert the focused glyph at the cursor |
+| **Space** | Normal space character |
 | **Enter** | Newline |
 | **Backspace** | Delete character before cursor |
 | **Delete** | Delete character under cursor |

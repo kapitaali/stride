@@ -49,7 +49,7 @@ impl EditorState {
             menu_focus: 0,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: palette row  ←→: select glyph  Space: insert  Ctrl+←→: move cursor  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
         }
