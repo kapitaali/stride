@@ -110,7 +110,15 @@ src/
 
 ## Integration with rust-apl
 
-The editor connects to the rust-apl interpreter as a gateway client on port 4502 (same protocol as RIDE). Start the interpreter server first:
+The editor connects to the rust-apl interpreter as a gateway client on port 4502 using the **RIDE binary-framed protocol** (same protocol as the [RIDE editor](https://github.com/Dyalog/ride)):
+
+```
+Framing: [4 bytes BE length][4 bytes "RIDE"][JSON payload]
+Commands: ["Execute", {"text": "2+2"}]
+Responses: ["AppendSessionOutput", {"result": "4"}]
+```
+
+Start the interpreter server first:
 
 ```bash
 cd ../rust-apl && cargo run -- --serve 4502

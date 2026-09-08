@@ -96,9 +96,14 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let mut gateway: Option<GatewayClient> = None;
     if state.config.auto_connect {
         match GatewayClient::connect(&state.config.gateway_host, state.config.gateway_port) {
-            Ok(c) => {
-                state.gateway_status = format!("connected to {}", c.addr());
-                gateway = Some(c);
+            Ok(mut c) => {
+                match c.handshake() {
+                    Ok(()) => {
+                        state.gateway_status = format!("connected to {}", c.addr());
+                        gateway = Some(c);
+                    }
+                    Err(e) => state.gateway_status = format!("handshake failed: {e}"),
+                }
             }
             Err(e) => state.gateway_status = format!("connect failed: {e}"),
         }
