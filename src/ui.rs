@@ -139,19 +139,58 @@ pub fn render_palette(state: &EditorState) -> Paragraph<'static> {
 }
 
 /// Build the editor widget with per-token syntax highlighting.
+/// The cursor row shows an underscore at the cursor column.
 pub fn render_editor(state: &EditorState) -> Paragraph<'static> {
+    let cursor = state.buffer.cursor();
     let mut lines: Vec<Line> = Vec::new();
     for (r, text) in state.buffer.lines().iter().enumerate() {
         let toks = syntax::highlight_line(text);
-        let mut spans: Vec<Span> = toks
-            .into_iter()
-            .map(|t| Span::styled(t.text, token_style(t.kind)))
-            .collect();
-        if r == state.buffer.cursor().row {
-            spans.insert(0, Span::raw("▎"));
-        } else {
-            spans.insert(0, Span::raw("  "));
+        let mut spans: Vec<Span> = Vec::new();
+        let mut char_idx = 0;
+        let is_cursor_row = r == cursor.row;
+
+        for tok in toks {
+            let tok_chars: Vec<char> = tok.text.chars().collect();
+            let tok_len = tok_chars.len();
+
+            if is_cursor_row && char_idx <= cursor.col && cursor.col < char_idx + tok_len {
+                // Split the token at the cursor position.
+                let before: String = tok_chars[..cursor.col - char_idx].iter().collect();
+                let at: String = tok_chars[cursor.col - char_idx..=cursor.col - char_idx]
+                    .iter()
+                    .collect();
+                let after: String = tok_chars[cursor.col - char_idx + 1..].iter().collect();
+
+                if !before.is_empty() {
+                    spans.push(Span::styled(before, token_style(tok.kind)));
+                }
+                spans.push(Span::styled(
+                    if at.is_empty() { " ".to_string() } else { at },
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(Modifier::UNDERLINED),
+                ));
+                if !after.is_empty() {
+                    spans.push(Span::styled(after, token_style(tok.kind)));
+                }
+            } else {
+                spans.push(Span::styled(tok.text.clone(), token_style(tok.kind)));
+            }
+
+            char_idx += tok_len;
         }
+
+        // Cursor at end of line: append an underscore.
+        if is_cursor_row && char_idx == cursor.col {
+            spans.push(Span::styled(
+                "_",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::White),
+            ));
+        }
+
         lines.push(Line::from(spans));
     }
     Paragraph::new(lines).block(
