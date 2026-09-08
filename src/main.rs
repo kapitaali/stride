@@ -85,7 +85,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     if let Some(path) = initial_file {
         match Buffer::open(&path) {
             Ok(buf) => {
-                state.buffer = buf;
+                state.buffers[0] = buf;
                 state.status = format!("opened {}", path.display());
             }
             Err(e) => state.status = format!("cannot open {}: {e}", path.display()),
@@ -198,12 +198,48 @@ fn handle_key(
         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
             eval_current_line(state, gateway);
         }
-        (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer.save() {
+        (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
         },
+        (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+            // New buffer / cycle
+            if state.buffers.len() < 9 {
+                state.buffers.push(Buffer::new());
+            }
+            state.active_buffer = (state.active_buffer + 1) % 9;
+            state.palette_col = 0;
+        }
+        (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+            // Close buffer
+            if state.buffers.len() > 1 {
+                state.buffers.remove(state.active_buffer);
+                state.active_buffer = state.active_buffer.min(state.buffers.len() - 1);
+            }
+        }
+        (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+            // Execute all lines of current buffer
+            let lines: Vec<String> = state.buffer().lines().iter().cloned().collect();
+            for line in &lines {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with(')') {
+                    eval_line(state, gateway, trimmed);
+                }
+            }
+        }
+        (KeyCode::Char(c), KeyModifiers::CONTROL) if c >= '1' && c <= '9' => {
+            let idx = (c as u8 - b'1') as usize;
+            if idx < state.buffers.len() {
+                state.active_buffer = idx;
+            } else {
+                while state.buffers.len() <= idx {
+                    state.buffers.push(Buffer::new());
+                }
+                state.active_buffer = idx;
+            }
+        }
         // Terminal sends Ctrl+H (0x08) for Backspace on some setups; treat it as Backspace.
-        (KeyCode::Char('h'), KeyModifiers::CONTROL) => state.buffer.backspace(),
+        (KeyCode::Char('h'), KeyModifiers::CONTROL) => state.buffer_mut().backspace(),
         (KeyCode::Tab, _) => {
             state.palette_row = (state.palette_row + 1) % rust_apl_editor::characters::row_count();
             state.palette_col = 0;
@@ -219,8 +255,8 @@ fn handle_key(
             state.palette_col = 0;
             state.status = rust_apl_editor::ui::focused_entry_name(state);
         }
-        (KeyCode::Right, KeyModifiers::NONE) => state.buffer.move_right(),
-        (KeyCode::Left, KeyModifiers::NONE) => state.buffer.move_left(),
+        (KeyCode::Right, KeyModifiers::NONE) => state.buffer_mut().move_right(),
+        (KeyCode::Left, KeyModifiers::NONE) => state.buffer_mut().move_left(),
         // Ctrl+Left/Right selects a glyph in the palette row.
         (KeyCode::Right, KeyModifiers::CONTROL) => {
             let len = state.palette().entries.len();
@@ -232,28 +268,28 @@ fn handle_key(
             state.palette_col = (state.palette_col + len - 1) % len;
             state.status = rust_apl_editor::ui::focused_entry_name(state);
         }
-        (KeyCode::Enter, KeyModifiers::NONE) => state.buffer.insert_newline(),
+        (KeyCode::Enter, KeyModifiers::NONE) => state.buffer_mut().insert_newline(),
         // Ctrl+Space inserts the focused palette glyph; Space is a normal space.
         (KeyCode::Char(' '), KeyModifiers::CONTROL) => {
             let glyph = state.palette().entries[state.palette_col].glyph;
-            state.buffer.insert_str(glyph);
+            state.buffer_mut().insert_str(glyph);
         }
         (KeyCode::Esc, _) => {
             state.menu_open = true;
             state.menu_focus = 0;
         }
         (KeyCode::Char(c), _) => {
-            state.buffer.insert_char(c);
+            state.buffer_mut().insert_char(c);
         }
-        (KeyCode::Backspace, _) => state.buffer.backspace(),
-        (KeyCode::Delete, _) => state.buffer.delete_forwards(),
-        (KeyCode::Up, _) => state.buffer.move_up(),
-        (KeyCode::Down, _) => state.buffer.move_down(),
-        (KeyCode::Left, _) => state.buffer.move_left(),
-        (KeyCode::Right, _) => state.buffer.move_right(),
-        (KeyCode::Home, _) => state.buffer.home(),
-        (KeyCode::End, _) => state.buffer.end(),
-        (KeyCode::Enter, _) => state.buffer.insert_newline(),
+        (KeyCode::Backspace, _) => state.buffer_mut().backspace(),
+        (KeyCode::Delete, _) => state.buffer_mut().delete_forwards(),
+        (KeyCode::Up, _) => state.buffer_mut().move_up(),
+        (KeyCode::Down, _) => state.buffer_mut().move_down(),
+        (KeyCode::Left, _) => state.buffer_mut().move_left(),
+        (KeyCode::Right, _) => state.buffer_mut().move_right(),
+        (KeyCode::Home, _) => state.buffer_mut().home(),
+        (KeyCode::End, _) => state.buffer_mut().end(),
+        (KeyCode::Enter, _) => state.buffer_mut().insert_newline(),
         _ => {}
     }
     false
@@ -288,7 +324,7 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
             state.status = "new buffer".to_string();
         }
         1 => state.status = "Open: not wired to a file dialog yet".to_string(),
-        2 => match state.buffer.save() {
+        2 => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
         },
@@ -309,12 +345,16 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
 }
 
 fn eval_current_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>) {
-    let line = state.buffer.current_line().trim().to_string();
+    let line = state.buffer_mut().current_line().trim().to_string();
     if line.is_empty() {
         return;
     }
+    eval_line(state, gateway, &line);
+}
+
+fn eval_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>, line: &str) {
     if let Some(gw) = gateway {
-        match gw.eval(&line) {
+        match gw.eval(line) {
             Ok(result) => {
                 state.push_result(format!("⎕ {result}"));
                 state.status = "evaluated via gateway".to_string();
@@ -327,7 +367,7 @@ fn eval_current_line(state: &mut EditorState, gateway: &mut Option<GatewayClient
     } else {
         // No gateway: evaluate locally with the interpreter.
         let mut env = apl::parser::Environment::new();
-        match env.eval_line(&line) {
+        match env.eval_line(line) {
             Ok(Some(v)) => {
                 let pp = apl::sysvars::get_pp(&env).unwrap_or(10);
                 let text = rust_apl_editor::ui::format_value_for(&v, pp);
@@ -336,7 +376,7 @@ fn eval_current_line(state: &mut EditorState, gateway: &mut Option<GatewayClient
             }
             Ok(None) => state.status = "no result (assignment)".to_string(),
             Err(e) => {
-                let rich = apl::AplError::from(e).with_source_line(line);
+                let rich = apl::AplError::from(e).with_source_line(line.to_string());
                 state.push_result(format!("ERROR {rich}"));
                 state.status = "eval error".to_string();
             }

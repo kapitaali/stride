@@ -18,13 +18,14 @@ use crate::syntax::{self, TokenKind};
 /// Live editor state the UI reads every frame.
 #[derive(Debug, Clone)]
 pub struct EditorState {
-    pub buffer: Buffer,
+    pub buffers: Vec<Buffer>,
+    pub active_buffer: usize,
     pub config: EditorConfig,
     /// Currently selected palette row (TAB cycles).
     pub palette_row: usize,
     /// Currently selected entry within the row.
     pub palette_col: usize,
-    /// Palette expanded to show 5 rows at once (Ctrl+TAB toggles).
+    /// Palette expanded to show 5 rows at once (Ctrl+P toggles).
     pub palette_expanded: bool,
     /// ESC menu open + which item is focused.
     pub menu_open: bool,
@@ -41,9 +42,18 @@ pub struct EditorState {
 }
 
 impl EditorState {
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffers[self.active_buffer]
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffers[self.active_buffer]
+    }
+
     pub fn new(config: EditorConfig) -> Self {
         Self {
-            buffer: Buffer::new(),
+            buffers: vec![Buffer::new()],
+            active_buffer: 0,
             config,
             palette_row: 0,
             palette_col: 0,
@@ -52,7 +62,7 @@ impl EditorState {
             menu_focus: 0,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
         }
@@ -200,9 +210,10 @@ pub fn render_palette(state: &EditorState) -> Paragraph<'static> {
 /// Build the editor widget with per-token syntax highlighting.
 /// The cursor row shows an underscore at the cursor column.
 pub fn render_editor(state: &EditorState) -> Paragraph<'static> {
-    let cursor = state.buffer.cursor();
+    let buf = state.buffer();
+    let cursor = buf.cursor();
     let mut lines: Vec<Line> = Vec::new();
-    for (r, text) in state.buffer.lines().iter().enumerate() {
+    for (r, text) in buf.lines().iter().enumerate() {
         let toks = syntax::highlight_line(text);
         let mut spans: Vec<Span> = Vec::new();
         let mut char_idx = 0;
@@ -255,7 +266,7 @@ pub fn render_editor(state: &EditorState) -> Paragraph<'static> {
     Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!("Editor — {}", state.buffer.display_name())),
+            .title(format!("Editor — {}", buf.display_name())),
     )
 }
 
@@ -275,16 +286,38 @@ pub fn render_results(state: &EditorState) -> Paragraph<'static> {
 
 /// Build the status bar widget.
 pub fn render_status_bar(state: &EditorState) -> Paragraph<'static> {
+    let buf = state.buffer();
     let left = format!(
         "{}  {}  cursor={}:{}",
         state.io_label,
         state.sec_label,
-        state.buffer.cursor().row + 1,
-        state.buffer.cursor().col + 1,
+        buf.cursor().row + 1,
+        buf.cursor().col + 1,
     );
-    let right = format!("gateway: {}", state.gateway_status);
-    let text = format!("{left}    {right}    {}", state.status);
-    Paragraph::new(text).style(Style::default().fg(Color::White).bg(Color::DarkGray))
+
+    // Buffer tabs
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::raw(left));
+    spans.push(Span::raw("    "));
+    for (i, buf) in state.buffers.iter().enumerate() {
+        let n = i + 1;
+        let name = buf
+            .file()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("untitled");
+        let dirty = if buf.is_dirty() { "*" } else { "" };
+        let style = if i == state.active_buffer {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(format!(" [{n}:{name}{dirty}] "), style));
+    }
+    spans.push(Span::raw("    "));
+    spans.push(Span::raw(format!("gateway: {}", state.gateway_status)));
+
+    Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::White).bg(Color::DarkGray))
 }
 
 /// Build the ALT menu overlay (File / Edit / Help / Quit).
@@ -395,7 +428,7 @@ mod tests {
 
     fn sample_state() -> EditorState {
         let mut s = EditorState::new(EditorConfig::default());
-        s.buffer = Buffer::from_string("A←⍳5\n+/A ⍝ sum");
+        s.buffers[0] = Buffer::from_string("A←⍳5\n+/A ⍝ sum");
         s.results.push("15".to_string());
         s
     }
@@ -411,7 +444,7 @@ mod tests {
         let s = sample_state();
         let _w = render_editor(&s);
         // The buffer has 2 lines; the widget should reflect that without panicking.
-        assert_eq!(s.buffer.line_count(), 2);
+        assert_eq!(s.buffer().line_count(), 2);
     }
 
     #[test]
