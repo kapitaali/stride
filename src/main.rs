@@ -167,8 +167,19 @@ fn handle_key(
             state.palette_col = 0;
             state.status = rust_apl_editor::ui::focused_entry_name(state);
         }
-        (KeyCode::Right, KeyModifiers::NONE) => state.buffer.move_right(),
-        (KeyCode::Left, KeyModifiers::NONE) => state.buffer.move_left(),
+        (KeyCode::Right, KeyModifiers::NONE) => {
+            let len = state.palette().entries.len();
+            state.palette_col = (state.palette_col + 1) % len;
+            state.status = rust_apl_editor::ui::focused_entry_name(state);
+        }
+        (KeyCode::Left, KeyModifiers::NONE) => {
+            let len = state.palette().entries.len();
+            state.palette_col = (state.palette_col + len - 1) % len;
+            state.status = rust_apl_editor::ui::focused_entry_name(state);
+        }
+        // Ctrl+Left/Right moves the text cursor horizontally.
+        (KeyCode::Right, KeyModifiers::CONTROL) => state.buffer.move_right(),
+        (KeyCode::Left, KeyModifiers::CONTROL) => state.buffer.move_left(),
         (KeyCode::Enter, KeyModifiers::NONE) => state.buffer.insert_newline(),
         // Space inserts the focused palette glyph (keeps Enter free for newline).
         (KeyCode::Char(' '), KeyModifiers::NONE) => {
