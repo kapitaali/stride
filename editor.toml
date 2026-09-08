@@ -1,0 +1,10 @@
+# rust-apl-editor configuration
+# RIDE-compatible gateway defaults (localhost:4502)
+
+gateway_host = "127.0.0.1"
+gateway_port = 4502
+interpreter_path = "../rust-apl/target/debug/libapl.so"
+apl_version = "GNU APL 2.0 (Rust)"
+plugin_path = "../rust-apl/target/debug/libdemo_plugin.so"
+auto_connect = true
+max_results = 500

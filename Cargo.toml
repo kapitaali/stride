@@ -1,0 +1,20 @@
+[package]
+name = "rust-apl-editor"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal APL editor (TUI) with RIDE-compatible gateway to the rust-apl interpreter"
+
+[[bin]]
+name = "apl-editor"
+path = "src/main.rs"
+
+[lib]
+name = "rust_apl_editor"
+path = "src/lib.rs"
+
+[dependencies]
+apl = { path = "../rust-apl" }
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
