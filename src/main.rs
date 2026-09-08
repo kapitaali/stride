@@ -154,6 +154,8 @@ fn handle_key(
             Ok(()) => state.status = "saved".to_string(),
             Err(e) => state.status = format!("save failed: {e}"),
         },
+        // Terminal sends Ctrl+H (0x08) for Backspace on some setups; treat it as Backspace.
+        (KeyCode::Char('h'), KeyModifiers::CONTROL) => state.buffer.backspace(),
         (KeyCode::Tab, _) => {
             state.palette_row = (state.palette_row + 1) % rust_apl_editor::characters::row_count();
             state.palette_col = 0;
