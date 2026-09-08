@@ -71,7 +71,7 @@ impl EditorState {
 /// Top-level layout constraints (ratatui `Constraint`s), shared by draw + tests.
 pub fn layout_constraints() -> [Constraint; 4] {
     [
-        Constraint::Length(2), // palette row
+        Constraint::Length(4), // palette row (border + 2 content lines for wrapping)
         Constraint::Min(4),    // editor
         Constraint::Length(6), // result pane
         Constraint::Length(1), // status bar
