@@ -52,7 +52,7 @@ impl EditorState {
             menu_focus: 0,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+TAB: expand  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: palette row  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
         }
@@ -114,18 +114,18 @@ fn token_style(kind: TokenKind) -> Style {
     }
 }
 
-/// Build the palette widget. Shows 1 row normally, or 5 rows when expanded.
+/// Build the palette widget. Shows 3 rows normally, or 7 rows when expanded.
+/// Rows are circular — the current row is always visible, and the view
+/// wraps around seamlessly when cycling past the last/first row.
 pub fn render_palette(state: &EditorState) -> Paragraph<'static> {
     let mut lines: Vec<Line> = Vec::new();
+    let row_count = characters::row_count();
 
     if state.palette_expanded {
-        // Show 5 rows centered on the current selection.
-        let row_count = characters::row_count();
-        let start = state.palette_row.saturating_sub(2);
-        let end = (start + 5).min(row_count);
-        let actual_start = end.saturating_sub(5);
-
-        for r in actual_start..end {
+        // Show 7 rows with the current row always second (index 1).
+        // Rows wrap around circularly.
+        for offset in -1..=5 {
+            let r = ((state.palette_row as isize + offset).rem_euclid(row_count as isize)) as usize;
             let row = characters::row(r);
             let is_current = r == state.palette_row;
             let mut spans: Vec<Span> = Vec::new();
@@ -155,33 +155,43 @@ pub fn render_palette(state: &EditorState) -> Paragraph<'static> {
             lines.push(Line::from(spans));
         }
     } else {
-        // Single row view.
-        let row = state.palette();
-        let mut spans: Vec<Span> = Vec::new();
-        spans.push(Span::styled(
-            format!(" {}: ", row.category.title()),
-            Style::default().add_modifier(Modifier::BOLD),
-        ));
-        for (i, entry) in row.entries.iter().enumerate() {
-            let style = palette_style(row.category);
-            let focused = i == state.palette_col;
-            let s = if focused {
-                style
-                    .bg(Color::White)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                style
-            };
-            spans.push(Span::styled(format!(" {} ", entry.glyph), s));
+        // Show 3 rows: one above, current, one below. Current is always centered.
+        for offset in -1..=1 {
+            let r = ((state.palette_row as isize + offset).rem_euclid(row_count as isize)) as usize;
+            let row = characters::row(r);
+            let is_current = r == state.palette_row;
+            let mut spans: Vec<Span> = Vec::new();
+            spans.push(Span::styled(
+                format!(" {}: ", row.category.title()),
+                if is_current {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ));
+            for (i, entry) in row.entries.iter().enumerate() {
+                let style = palette_style(row.category);
+                let focused = is_current && i == state.palette_col;
+                let s = if focused {
+                    style
+                        .bg(Color::White)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_current {
+                    style
+                } else {
+                    style.fg(Color::DarkGray)
+                };
+                spans.push(Span::styled(format!(" {} ", entry.glyph), s));
+            }
+            lines.push(Line::from(spans));
         }
-        lines.push(Line::from(spans));
     }
 
     let title = if state.palette_expanded {
-        "Palette (expanded — Ctrl+TAB to collapse)".to_string()
+        "Palette (expanded — Ctrl+P to collapse)".to_string()
     } else {
-        format!("Palette (row {}/{})", state.palette_row + 1, characters::row_count())
+        "Palette  ←→ next category: Tab |  move cursor: ctrl-leftArr, ctrl-rightArr | insert selection:  Ctrl+Space | expand palette:  Ctrl+P".to_string()
     };
 
     Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title))
@@ -321,7 +331,7 @@ pub fn menu_item_count() -> usize {
 pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     use ratatui::layout::Layout;
 
-    let palette_rows = if state.palette_expanded { 5 } else { 1 };
+    let palette_rows = if state.palette_expanded { 9 } else { 5 };
     let chunks = Layout::vertical(layout_constraints(palette_rows)).split(frame.area());
     frame.render_widget(render_palette(state), chunks[0]);
     frame.render_widget(render_editor(state), chunks[1]);
@@ -426,17 +436,17 @@ mod tests {
 
     #[test]
     fn layout_constraints_sum_to_full_height() {
-        let c = layout_constraints(1);
+        let c = layout_constraints(5);
         assert_eq!(c.len(), 4);
-        assert!(matches!(c[0], Constraint::Length(1)));
+        assert!(matches!(c[0], Constraint::Length(5)));
         assert!(matches!(c[3], Constraint::Length(1)));
     }
 
     #[test]
     fn layout_constraints_expanded() {
-        let c = layout_constraints(5);
+        let c = layout_constraints(9);
         assert_eq!(c.len(), 4);
-        assert!(matches!(c[0], Constraint::Length(5)));
+        assert!(matches!(c[0], Constraint::Length(9)));
     }
 
     #[test]

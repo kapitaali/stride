@@ -16,15 +16,15 @@ pub struct EditorConfig {
     /// Port of the interpreter gateway (RIDE default `4502`).
     #[serde(default = "default_port")]
     pub gateway_port: u16,
-    /// Path to the interpreter shared library / binary.
-    #[serde(default = "default_interpreter_path")]
-    pub interpreter_path: String,
+    /// Path to the interpreter executable to run if gateway is not listening.
+    #[serde(default = "default_gateway_executable")]
+    pub gateway_executable: String,
+    /// Arguments to pass to the gateway executable (default `--serve`).
+    #[serde(default = "default_gateway_args")]
+    pub gateway_args: String,
     /// Version string shown in the status bar.
     #[serde(default = "default_apl_version")]
     pub apl_version: String,
-    /// Path to an optional plugin `.so`.
-    #[serde(default = "default_plugin_path")]
-    pub plugin_path: String,
     /// Connect to the gateway automatically at startup.
     #[serde(default = "default_true")]
     pub auto_connect: bool,
@@ -39,14 +39,14 @@ fn default_host() -> String {
 fn default_port() -> u16 {
     4502
 }
-fn default_interpreter_path() -> String {
-    "../rust-apl/target/debug/libapl.so".to_string()
+fn default_gateway_executable() -> String {
+    "../rust-apl/target/debug/apl".to_string()
+}
+fn default_gateway_args() -> String {
+    "--serve".to_string()
 }
 fn default_apl_version() -> String {
     "GNU APL 2.0 (Rust)".to_string()
-}
-fn default_plugin_path() -> String {
-    "../rust-apl/target/debug/libdemo_plugin.so".to_string()
 }
 fn default_true() -> bool {
     true
@@ -60,9 +60,9 @@ impl Default for EditorConfig {
         Self {
             gateway_host: default_host(),
             gateway_port: default_port(),
-            interpreter_path: default_interpreter_path(),
+            gateway_executable: default_gateway_executable(),
+            gateway_args: default_gateway_args(),
             apl_version: default_apl_version(),
-            plugin_path: default_plugin_path(),
             auto_connect: default_true(),
             max_results: default_max_results(),
         }

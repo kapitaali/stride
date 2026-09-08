@@ -92,20 +92,44 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         }
     }
 
-    // Try an early gateway connection (non-fatal).
+    // Try to connect to the gateway. If not running, spawn it.
     let mut gateway: Option<GatewayClient> = None;
     if state.config.auto_connect {
         match GatewayClient::connect(&state.config.gateway_host, state.config.gateway_port) {
-            Ok(mut c) => {
-                match c.handshake() {
-                    Ok(()) => {
-                        state.gateway_status = format!("connected to {}", c.addr());
-                        gateway = Some(c);
+            Ok(mut c) => match c.handshake() {
+                Ok(()) => {
+                    state.gateway_status = format!("connected to {}", c.addr());
+                    gateway = Some(c);
+                }
+                Err(e) => state.gateway_status = format!("handshake failed: {e}"),
+            },
+            Err(_) => {
+                // Gateway not running — spawn it.
+                state.gateway_status = "starting gateway...".to_string();
+                match spawn_gateway(&state.config) {
+                    Ok(_) => {
+                        // Wait for it to start listening.
+                        for _ in 0..50 {
+                            std::thread::sleep(Duration::from_millis(100));
+                            if let Ok(mut c) = GatewayClient::connect(
+                                &state.config.gateway_host,
+                                state.config.gateway_port,
+                            ) {
+                                if c.handshake().is_ok() {
+                                    state.gateway_status =
+                                        format!("connected to {}", c.addr());
+                                    gateway = Some(c);
+                                    break;
+                                }
+                            }
+                        }
+                        if gateway.is_none() {
+                            state.gateway_status = "gateway start timeout".to_string();
+                        }
                     }
-                    Err(e) => state.gateway_status = format!("handshake failed: {e}"),
+                    Err(e) => state.gateway_status = format!("gateway start failed: {e}"),
                 }
             }
-            Err(e) => state.gateway_status = format!("connect failed: {e}"),
         }
     }
 
@@ -143,6 +167,25 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     res
 }
 
+/// Spawn the gateway executable. Returns when the process has been launched
+/// (not when it's ready to accept connections).
+fn spawn_gateway(config: &rust_apl_editor::config::EditorConfig) -> std::io::Result<()> {
+    use std::process::Command;
+
+    let exec = &config.gateway_executable;
+    let args = config.gateway_args.split_whitespace().collect::<Vec<_>>();
+
+    Command::new(exec)
+        .args(&args)
+        .arg(config.gateway_port.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    Ok(())
+}
+
 /// Returns true when the app should quit.
 fn handle_key(
     state: &mut EditorState,
@@ -166,8 +209,8 @@ fn handle_key(
             state.palette_col = 0;
             state.status = rust_apl_editor::ui::focused_entry_name(state);
         }
-        // Ctrl+TAB toggles expanded palette (5 rows).
-        (KeyCode::BackTab, KeyModifiers::CONTROL) => {
+        // Ctrl+P toggles expanded palette (5 rows).
+        (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
             state.palette_expanded = !state.palette_expanded;
         }
         (KeyCode::BackTab, _) => {
