@@ -184,7 +184,7 @@ pub fn render_status_bar(state: &EditorState) -> Paragraph<'static> {
     Paragraph::new(text).style(Style::default().fg(Color::White).bg(Color::DarkGray))
 }
 
-/// Build the ALT menu overlay (File / Edit / Help).
+/// Build the ALT menu overlay (File / Edit / Help / Quit).
 pub fn render_menu(state: &EditorState) -> List<'static> {
     let items = [
         "File › New",
@@ -197,6 +197,7 @@ pub fn render_menu(state: &EditorState) -> List<'static> {
         "Edit › Copy",
         "Edit › Paste",
         "Help › About",
+        "QUIT › Quit",
     ];
     let focused = state.menu_focus.min(items.len() - 1);
     let list_items: Vec<ListItem> = items
@@ -218,6 +219,11 @@ pub fn render_menu(state: &EditorState) -> List<'static> {
     )
 }
 
+/// Number of menu items (for bounds + overlay height).
+pub fn menu_item_count() -> usize {
+    11
+}
+
 /// Draw the whole frame. `area` is the terminal's full rect.
 pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     use ratatui::layout::Layout;
@@ -231,7 +237,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     if state.menu_open {
         let menu = render_menu(state);
         let w = 28u16;
-        let h = 12u16;
+        let h = (menu_item_count() + 2) as u16;
         let area = centered_rect(w, h, frame.area());
         frame.render_widget(Clear, area);
         frame.render_widget(menu, area);
@@ -305,11 +311,11 @@ mod tests {
     }
 
     #[test]
-    fn menu_has_ten_items() {
+    fn menu_has_eleven_items() {
         let mut s = sample_state();
         s.menu_open = true;
         let list = render_menu(&s);
-        assert_eq!(list.len(), 10);
+        assert_eq!(list.len(), 11);
     }
 
     #[test]

@@ -209,18 +209,22 @@ fn handle_menu_key(
 ) -> bool {
     match code {
         KeyCode::Esc => state.menu_open = false,
-        KeyCode::Down => state.menu_focus = (state.menu_focus + 1) % 10,
-        KeyCode::Up => state.menu_focus = (state.menu_focus + 9) % 10,
+        KeyCode::Down => state.menu_focus = (state.menu_focus + 1) % rust_apl_editor::ui::menu_item_count(),
+        KeyCode::Up => {
+            let n = rust_apl_editor::ui::menu_item_count();
+            state.menu_focus = (state.menu_focus + n - 1) % n;
+        }
         KeyCode::Enter => {
-            menu_action(state, gateway, state.menu_focus);
+            let item = state.menu_focus;
             state.menu_open = false;
+            return menu_action(state, gateway, item);
         }
         _ => {}
     }
     false
 }
 
-fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, item: usize) {
+fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, item: usize) -> bool {
     match item {
         0 => {
             *state = EditorState::new(state.config.clone());
@@ -240,9 +244,11 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
                 state.config.apl_version
             )
         }
+        10 => return true, // Quit
         _ => {}
     }
     let _ = gateway;
+    false
 }
 
 fn eval_current_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>) {
