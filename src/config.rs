@@ -22,6 +22,9 @@ pub struct EditorConfig {
     /// Arguments to pass to the gateway executable (default `--serve`).
     #[serde(default = "default_gateway_args")]
     pub gateway_args: String,
+    /// Environment variables to set when spawning the gateway (e.g., RIDE_INIT).
+    #[serde(default)]
+    pub gateway_env: Vec<String>,
     /// Version string shown in the status bar.
     #[serde(default = "default_apl_version")]
     pub apl_version: String,
@@ -62,6 +65,7 @@ impl Default for EditorConfig {
             gateway_port: default_port(),
             gateway_executable: default_gateway_executable(),
             gateway_args: default_gateway_args(),
+            gateway_env: Vec::new(),
             apl_version: default_apl_version(),
             auto_connect: default_true(),
             max_results: default_max_results(),

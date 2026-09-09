@@ -3,8 +3,10 @@
 
 gateway_host = "127.0.0.1"
 gateway_port = 4502
-gateway_executable = "../rust-apl/target/debug/apl"
-gateway_args = "--serve"
+gateway_executable = "/home/theb/Apps/array/kap-jvm-text/bin/kap-jvm-text"
+gateway_args = "--ride"
+# Environment variables to set when spawning the gateway
+gateway_env = ["RIDE_INIT=CONNECT:localhost:4502"]
 apl_version = "GNU APL 2.0 (Rust)"
 auto_connect = true
 max_results = 500

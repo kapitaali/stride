@@ -179,13 +179,21 @@ fn spawn_gateway(config: &stride::config::EditorConfig) -> std::io::Result<()> {
     let exec = &config.gateway_executable;
     let args = config.gateway_args.split_whitespace().collect::<Vec<_>>();
 
-    Command::new(exec)
-        .args(&args)
+    let mut cmd = Command::new(exec);
+    cmd.args(&args)
         .arg(config.gateway_port.to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+
+    // Set environment variables (e.g., RIDE_INIT)
+    for env_var in &config.gateway_env {
+        if let Some((key, value)) = env_var.split_once('=') {
+            cmd.env(key, value);
+        }
+    }
+
+    cmd.spawn()?;
 
     Ok(())
 }
