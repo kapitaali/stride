@@ -42,6 +42,8 @@ pub struct EditorState {
     pub sec_label: String,
     /// Local interpreter environment (persists across evaluations when no gateway).
     pub env: apl::parser::Environment,
+    /// Results pane display mode: 1=compact, 2=expanded (50/50 horizontal), 3=split (50/50 vertical).
+    pub results_mode: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -81,10 +83,11 @@ impl EditorState {
             dialog: None,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+L: results mode  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
             env: apl::parser::Environment::new(),
+            results_mode: 1,
         }
     }
 
@@ -388,11 +391,60 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     use ratatui::layout::Layout;
 
     let palette_rows = if state.palette_expanded { 9 } else { 5 };
-    let chunks = Layout::vertical(layout_constraints(palette_rows)).split(frame.area());
-    frame.render_widget(render_palette(state), chunks[0]);
-    frame.render_widget(render_editor(state), chunks[1]);
-    frame.render_widget(render_results(state), chunks[2]);
-    frame.render_widget(render_status_bar(state), chunks[3]);
+    
+    match state.results_mode {
+        1 => {
+            // Mode 1: Compact - palette, editor, results (6 rows), status bar
+            let chunks = Layout::vertical(layout_constraints(palette_rows)).split(frame.area());
+            frame.render_widget(render_palette(state), chunks[0]);
+            frame.render_widget(render_editor(state), chunks[1]);
+            frame.render_widget(render_results(state), chunks[2]);
+            frame.render_widget(render_status_bar(state), chunks[3]);
+        }
+        2 => {
+            // Mode 2: Expanded results (50/50 horizontal split)
+            let main_rows = Layout::vertical(vec![
+                Constraint::Length(palette_rows as u16),
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+                Constraint::Length(1),
+            ]).split(frame.area());
+            
+            frame.render_widget(render_palette(state), main_rows[0]);
+            
+            // Split the middle 50% into editor and results side by side
+            let middle = Layout::horizontal(vec![
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ]).split(main_rows[1]);
+            
+            frame.render_widget(render_editor(state), middle[0]);
+            frame.render_widget(render_results(state), middle[1]);
+            frame.render_widget(render_status_bar(state), main_rows[3]);
+        }
+        3 => {
+            // Mode 3: Split vertically (editor left, results right, 50/50)
+            let main_split = Layout::horizontal(vec![
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ]).split(frame.area());
+            
+            // Left side: palette + editor
+            let left = Layout::vertical(vec![
+                Constraint::Length(palette_rows as u16),
+                Constraint::Min(4),
+                Constraint::Length(1),
+            ]).split(main_split[0]);
+            
+            frame.render_widget(render_palette(state), left[0]);
+            frame.render_widget(render_editor(state), left[1]);
+            frame.render_widget(render_status_bar(state), left[2]);
+            
+            // Right side: results
+            frame.render_widget(render_results(state), main_split[1]);
+        }
+        _ => {}
+    }
 
     if state.menu_open {
         let menu = render_menu(state);
@@ -491,6 +543,7 @@ Ctrl+B          Execute all lines of current buffer
 PALETTE
 ───────
 Ctrl+P          Toggle expanded palette (7 rows)
+Ctrl+L          Cycle results display mode (compact/expanded/split)
 ESC             Open / close menu
 
 MISCELLANEOUS

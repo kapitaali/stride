@@ -254,6 +254,11 @@ fn handle_key(
         (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
             state.palette_expanded = !state.palette_expanded;
         }
+        // Ctrl+L cycles results display mode (1→2→3→1).
+        (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
+            state.results_mode = (state.results_mode % 3) + 1;
+            state.status = format!("results mode: {}", state.results_mode);
+        }
         (KeyCode::BackTab, _) => {
             let n = stride::characters::row_count();
             state.palette_row = (state.palette_row + n - 1) % n;
