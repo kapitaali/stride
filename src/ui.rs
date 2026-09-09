@@ -54,7 +54,9 @@ pub enum Dialog {
     SaveAs {
         path: String,
     },
-    Help,
+    Help {
+        scroll: usize,
+    },
 }
 
 impl EditorState {
@@ -406,7 +408,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
         let (w, h) = match dialog {
             Dialog::OpenFile { files, .. } => (50u16, (files.len() + 6).max(8) as u16),
             Dialog::SaveAs { .. } => (50u16, 5u16),
-            Dialog::Help => (70u16, 32u16),
+            Dialog::Help { scroll: _ } => (70u16, 32u16),
         };
         let area = centered_rect(w, h, frame.area());
         frame.render_widget(Clear, area);
@@ -452,7 +454,7 @@ fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
                     .title("Enter path (Enter to confirm, ESC to cancel)"),
             )
         }
-        Dialog::Help => {
+        Dialog::Help { scroll } => {
             let text = "\
 stride — Terminal APL Editor
 ═══════════════════════════════════════════════════
@@ -502,10 +504,26 @@ stride 0.1.0 — a terminal APL editor
 RIDE-compatible gateway on port 4502
 https://github.com/kapitaali/stride";
 
-            Paragraph::new(text).block(
+            let lines: Vec<&str> = text.lines().collect();
+            let total_lines = lines.len();
+            // Dialog height is 32, minus 2 for borders = 30 usable lines.
+            let visible = 30usize;
+            let max_scroll = total_lines.saturating_sub(visible);
+            let scroll = (*scroll).min(max_scroll);
+            let end = (scroll + visible).min(total_lines);
+            let visible_lines = &lines[scroll..end];
+            let content: String = visible_lines.join("\n");
+
+            let title = if max_scroll > 0 {
+                format!("stride — Help (↑↓ to scroll {}/{} ESC/Enter to close)", (scroll + visible).min(total_lines), total_lines)
+            } else {
+                "stride — Help (ESC/Enter to close)".to_string()
+            };
+
+            Paragraph::new(content).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("stride — Help (ESC to close)"),
+                    .title(title),
             )
         }
     }

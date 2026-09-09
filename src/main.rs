@@ -342,7 +342,7 @@ fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Ga
         3 => state.status = "Save As: not wired to a file dialog yet".to_string(),
         4..=8 => state.status = "edit action not yet implemented".to_string(),
         9 => {
-            state.dialog = Some(Dialog::Help);
+            state.dialog = Some(Dialog::Help { scroll: 0 });
         }
         10 => return true, // Quit
         _ => {}
@@ -424,9 +424,21 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
 fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
         match dialog {
-            Dialog::Help => {
-                // Any key closes the help dialog.
-                state.dialog = None;
+            Dialog::Help { scroll } => {
+                match code {
+                    KeyCode::Esc | KeyCode::Enter => {
+                        state.dialog = None;
+                    }
+                    KeyCode::Up => {
+                        if *scroll > 0 {
+                            *scroll -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        *scroll += 1;
+                    }
+                    _ => {}
+                }
             }
             Dialog::OpenFile { path, cursor, files } => {
                 match code {
