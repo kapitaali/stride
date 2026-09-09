@@ -300,15 +300,18 @@ pub fn render_results(state: &EditorState) -> Paragraph<'static> {
     } else {
         state.results.join("\n")
     };
+    // Count actual lines (results may contain multi-line boxed output).
+    let total_lines = text.lines().count();
+    // Scroll to show the bottom: ratatui clamps the offset so the last
+    // lines are pinned to the widget bottom regardless of content height.
+    let scroll = (total_lines as u16).saturating_sub(1);
     Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Results (gateway)"),
         )
-        // Scroll to the bottom so the most recent output is always visible.
-        // Using u16::MAX lets ratatui clamp to the maximum valid scroll.
-        .scroll((u16::MAX, 0))
+        .scroll((scroll, 0))
 }
 
 /// Build the status bar widget.
