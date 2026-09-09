@@ -54,6 +54,7 @@ pub enum Dialog {
     SaveAs {
         path: String,
     },
+    Help,
 }
 
 impl EditorState {
@@ -405,6 +406,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
         let (w, h) = match dialog {
             Dialog::OpenFile { files, .. } => (50u16, (files.len() + 6).max(8) as u16),
             Dialog::SaveAs { .. } => (50u16, 5u16),
+            Dialog::Help => (70u16, 32u16),
         };
         let area = centered_rect(w, h, frame.area());
         frame.render_widget(Clear, area);
@@ -448,6 +450,62 @@ fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Enter path (Enter to confirm, ESC to cancel)"),
+            )
+        }
+        Dialog::Help => {
+            let text = "\
+stride — Terminal APL Editor
+═══════════════════════════════════════════════════
+
+A full-featured TUI editor for writing and evaluating
+APL expressions. Connects to interpreters (Kap, rust-apl)
+via the RIDE protocol.
+
+KEYBOARD SHORTCUTS
+─────────────────
+TAB             Cycle palette row (category)
+Ctrl+← / Ctrl+→  Select glyph within row
+Ctrl+Space      Insert focused glyph
+Space           Normal space character
+Enter           Newline
+Backspace       Delete character before cursor
+Delete          Delete character under cursor
+↑ / ↓           Move cursor vertically
+Ctrl+← / Ctrl→  Move cursor horizontally
+Home / End      Jump to start / end of line
+
+BUFFER MANAGEMENT
+─────────────────
+Ctrl+N          New buffer (cycles after 9)
+Ctrl+1 … Ctrl+9 Switch to buffer N
+Ctrl+W          Close current buffer
+Ctrl+O          Open file into new buffer
+
+EVALUATION
+──────────
+Ctrl+E          Evaluate current line
+Ctrl+B          Execute all lines of current buffer
+
+PALETTE
+───────
+Ctrl+P          Toggle expanded palette (7 rows)
+ESC             Open / close menu
+
+MISCELLANEOUS
+─────────────
+Ctrl+S          Save current file
+Ctrl+Q          Close stride
+
+ABOUT
+─────
+stride 0.1.0 — a terminal APL editor
+RIDE-compatible gateway on port 4502
+https://github.com/kapitaali/stride";
+
+            Paragraph::new(text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("stride — Help (ESC to close)"),
             )
         }
     }

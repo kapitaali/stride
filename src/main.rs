@@ -342,11 +342,7 @@ fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Ga
         3 => state.status = "Save As: not wired to a file dialog yet".to_string(),
         4..=8 => state.status = "edit action not yet implemented".to_string(),
         9 => {
-            state.status = format!(
-                "stride {} — {}",
-                env!("CARGO_PKG_VERSION"),
-                state.config.apl_version
-            )
+            state.dialog = Some(Dialog::Help);
         }
         10 => return true, // Quit
         _ => {}
@@ -427,101 +423,98 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
 /// Handle keys when a dialog is open.
 fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
-        match code {
-            KeyCode::Esc => {
+        match dialog {
+            Dialog::Help => {
+                // Any key closes the help dialog.
                 state.dialog = None;
             }
-            KeyCode::Enter => {
-                if let Dialog::OpenFile { path, cursor, files } = dialog {
-                    // Determine what to open/navigate
-                    let selected = if !files.is_empty() && *cursor < files.len() {
-                        Some(files[*cursor].clone())
-                    } else {
-                        None
-                    };
-
-                    // Prepend current directory to selected file name
-                    let target = match &selected {
-                        Some(name) => {
-                            if path.ends_with('/') {
-                                format!("{path}{name}")
-                            } else {
-                                format!("{path}/{name}")
-                            }
-                        }
-                        None => path.clone(),
-                    };
-
-                    if target.is_empty() {
-                        return;
-                    }
-
-                    let p = std::path::PathBuf::from(&target);
-                    if p.is_dir() || target.ends_with('/') {
-                        // Navigate into directory
-                        let mut new_path = target;
-                        if !new_path.ends_with('/') {
-                            new_path.push('/');
-                        }
-                        *path = new_path;
-                        *files = list_files_for_path(path);
-                        *cursor = 0;
-                    } else {
-                        // Open file
-                        match Buffer::open(&p) {
-                            Ok(buf) => {
-                                if state.buffers.len() < 9 {
-                                    state.buffers.push(buf);
-                                    state.active_buffer = state.buffers.len() - 1;
-                                } else {
-                                    state.buffers[state.active_buffer] = buf;
-                                }
-                                state.status = format!("opened {}", target);
-                            }
-                            Err(e) => state.status = format!("cannot open {}: {e}", target),
-                        }
+            Dialog::OpenFile { path, cursor, files } => {
+                match code {
+                    KeyCode::Esc => {
                         state.dialog = None;
                     }
-                }
-            }
-            KeyCode::Up => {
-                if let Dialog::OpenFile { cursor, .. } = dialog {
-                    if *cursor > 0 {
-                        *cursor -= 1;
+                    KeyCode::Enter => {
+                        // Determine what to open/navigate
+                        let selected = if !files.is_empty() && *cursor < files.len() {
+                            Some(files[*cursor].clone())
+                        } else {
+                            None
+                        };
+
+                        // Prepend current directory to selected file name
+                        let target = match &selected {
+                            Some(name) => {
+                                if path.ends_with('/') {
+                                    format!("{path}{name}")
+                                } else {
+                                    format!("{path}/{name}")
+                                }
+                            }
+                            None => path.clone(),
+                        };
+
+                        if target.is_empty() {
+                            return;
+                        }
+
+                        let p = std::path::PathBuf::from(&target);
+                        if p.is_dir() || target.ends_with('/') {
+                            // Navigate into directory
+                            let mut new_path = target;
+                            if !new_path.ends_with('/') {
+                                new_path.push('/');
+                            }
+                            *path = new_path;
+                            *files = list_files_for_path(path);
+                            *cursor = 0;
+                        } else {
+                            // Open file
+                            match Buffer::open(&p) {
+                                Ok(buf) => {
+                                    if state.buffers.len() < 9 {
+                                        state.buffers.push(buf);
+                                        state.active_buffer = state.buffers.len() - 1;
+                                    } else {
+                                        state.buffers[state.active_buffer] = buf;
+                                    }
+                                    state.status = format!("opened {}", target);
+                                }
+                                Err(e) => state.status = format!("cannot open {}: {e}", target),
+                            }
+                            state.dialog = None;
+                        }
                     }
-                }
-            }
-            KeyCode::Down => {
-                if let Dialog::OpenFile { cursor, files, .. } = dialog {
-                    if *cursor + 1 < files.len() {
-                        *cursor += 1;
+                    KeyCode::Up => {
+                        if *cursor > 0 {
+                            *cursor -= 1;
+                        }
                     }
+                    KeyCode::Down => {
+                        if *cursor + 1 < files.len() {
+                            *cursor += 1;
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        path.pop();
+                        *files = list_files_for_path(path);
+                        *cursor = 0;
+                    }
+                    KeyCode::Char('h') if mods == KeyModifiers::CONTROL => {
+                        path.pop();
+                        *files = list_files_for_path(path);
+                        *cursor = 0;
+                    }
+                    KeyCode::Char(c) => {
+                        path.push(c);
+                        *files = list_files_for_path(path);
+                        *cursor = 0;
+                    }
+                    _ => {}
                 }
             }
-            KeyCode::Backspace => {
-                if let Dialog::OpenFile { path, cursor, files } = dialog {
-                    path.pop();
-                    // Refresh file list based on new path
-                    *files = list_files_for_path(path);
-                    *cursor = 0;
-                }
+            Dialog::SaveAs { .. } => {
+                state.dialog = None;
             }
-            KeyCode::Char('h') if mods == KeyModifiers::CONTROL => {
-                if let Dialog::OpenFile { path, cursor, files } = dialog {
-                    path.pop();
-                    *files = list_files_for_path(path);
-                    *cursor = 0;
-                }
-            }
-            KeyCode::Char(c) => {
-                if let Dialog::OpenFile { path, cursor, files } = dialog {
-                    path.push(c);
-                    // Refresh file list based on new path
-                    *files = list_files_for_path(path);
-                    *cursor = 0;
-                }
-            }
-            _ => {}
         }
     }
 }
