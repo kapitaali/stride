@@ -61,14 +61,14 @@ cd ../rust-apl && cargo run -- --serve 4502
 | **Delete** | Delete character under cursor |
 | **Home / End** | Jump to start / end of line |
 | **Ctrl + E** | Evaluate the current line |
-| **Ctrl + B** | Execute all lines of current buffer |
+| **Ctrl + Enter** | Execute all lines of current buffer |
 | **Ctrl + S** | Save the current file |
 | **Ctrl + O** | Open file into new buffer |
 | **Ctrl + N** | New buffer (cycles after 9) |
 | **Ctrl + 1** – **Ctrl + 9** | Switch to buffer N |
 | **Ctrl + W** | Close current buffer |
 | **ESC** | Open / close the menu |
-| **Ctrl + Q** | Quit |
+| **Ctrl + X** | Quit |
 
 ## Configuration
 

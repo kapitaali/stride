@@ -83,7 +83,7 @@ impl EditorState {
             dialog: None,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+L: results mode  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
+            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+L: results mode  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+Enter: run all  ESC: menu  Ctrl-E: eval  Ctrl-X: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
             env: apl::parser::Environment::new(),
@@ -542,7 +542,7 @@ Ctrl+O          Open file into new buffer
 EVALUATION
 ──────────
 Ctrl+E          Evaluate current line
-Ctrl+B          Execute all lines of current buffer
+Ctrl+Enter       Execute all lines of current buffer
 
 PALETTE
 ───────
@@ -553,7 +553,7 @@ ESC             Open / close menu
 MISCELLANEOUS
 ─────────────
 Ctrl+S          Save current file
-Ctrl+Q          Close stride
+Ctrl+X          Close stride
 
 ABOUT
 ─────

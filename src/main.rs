@@ -107,7 +107,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let port = state.config.gateway_port;
     if let Err(e) = std::net::TcpListener::bind(format!("127.0.0.1:{port}")) {
         eprintln!("Cannot start stride: port {port} is already in use ({e}).");
-        eprintln!("Another stride instance may be running. Use )OFF or Ctrl+Q to quit it first.");
+        eprintln!("Another stride instance may be running. Use )OFF or Ctrl+X to quit it first.");
         eprintln!("Or specify a different port with --port <number>.");
         std::process::exit(1);
     }
@@ -209,7 +209,7 @@ fn handle_key(
     mods: KeyModifiers,
 ) -> bool {
     match (code, mods) {
-        (KeyCode::Char('q'), KeyModifiers::CONTROL) => return true,
+        (KeyCode::Char('x'), KeyModifiers::CONTROL) => return true,
         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
             eval_current_line(state, interpreter);
         }
@@ -240,7 +240,7 @@ fn handle_key(
                 state.active_buffer = state.active_buffer.min(state.buffers.len() - 1);
             }
         }
-        (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+        (KeyCode::Enter, KeyModifiers::CONTROL) => {
             // Execute all lines of current buffer
             let lines: Vec<String> = state.buffer().lines().iter().cloned().collect();
             for line in &lines {
