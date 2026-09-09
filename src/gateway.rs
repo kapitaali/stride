@@ -62,19 +62,16 @@ impl GatewayServer {
 
     /// Start the gateway server. This method blocks.
     pub fn run(self) -> std::io::Result<()> {
-        println!("gateway: attempting to bind port {}...", self.port);
         let listener = match TcpListener::bind(format!("127.0.0.1:{}", self.port)) {
-            Ok(l) => {
-                println!("gateway: successfully bound to port {}", self.port);
-                l
-            }
+            Ok(l) => l,
             Err(e) => {
-                eprintln!("gateway: cannot bind port {}: {}", self.port, e);
+                let _ = self.tx.send(GatewayMessage::Output {
+                    result: format!("gateway: cannot bind port {}: {}", self.port, e),
+                    msg_type: 0,
+                });
                 return Err(e);
             }
         };
-
-        println!("Gateway server listening on port {}", self.port);
 
         let tx = self.tx.clone();
         let interpreter = self.interpreter.clone();
@@ -87,7 +84,6 @@ impl GatewayServer {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_default();
-                    println!("gateway: interpreter connected from {addr}");
                     let tx = tx.clone();
                     let interpreter = interpreter.clone();
 
@@ -96,13 +92,10 @@ impl GatewayServer {
                         handle_interpreter(stream, tx, interpreter, addr);
                     });
                 }
-                Err(e) => {
-                    eprintln!("Connection failed: {}", e);
-                }
+                Err(_) => {}
             }
         }
 
-        println!("gateway: listener loop exited");
         Ok(())
     }
 }
