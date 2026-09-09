@@ -365,6 +365,19 @@ fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sen
 }
 
 fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str) {
+    // Intercept )system commands and handle locally
+    if line.starts_with(')') {
+        match apl::sysvars::syscmd(line[1..].trim(), &mut state.env) {
+            None => {} // )OFF — ignore in stride
+            Some(lines) => {
+                for l in lines {
+                    state.push_result(l);
+                }
+            }
+        }
+        return;
+    }
+
     let (tx, rx) = channel::<String>();
     
     // Try to send to connected interpreter
