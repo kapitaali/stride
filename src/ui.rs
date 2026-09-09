@@ -557,7 +557,8 @@ pub fn focused_entry_name(state: &EditorState) -> String {
 /// Format a `ValueP` to a display string (used by pipe mode + local eval).
 pub fn format_value_for(v: &apl::value::ValueP, pp: usize) -> String {
     let all_chars = !v.cells().is_empty() && v.cells().iter().all(|c| c.is_character_cell());
-    if v.rank() >= 2 || all_chars {
+    let is_nested = v.cells().iter().any(|c| c.is_pointer_cell());
+    if v.rank() >= 2 || all_chars || is_nested {
         apl::boxdisplay::render_plain_with_pp(v, pp).join("\n")
     } else if v.is_scalar() || v.is_vector() {
         v.cells()
