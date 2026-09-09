@@ -1,11 +1,7 @@
 //! APL editor TUI: entry point, event loop, gateway wiring.
-//!
-//! Run with `cargo run` (interactive TUI) or `apl-editor < demo.apl`
-//! (pipe-driven mode, no TUI). The TUI path needs a real terminal;
-//! the pipe path evaluates each line through the interpreter directly.
 
 use std::env;
-use std::io::{self, IsTerminal, Read};
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -33,12 +29,6 @@ fn main() {
         }
     }
 
-    // Pipe mode: stdin is not a terminal → evaluate each line, print results.
-    if !io::stdin().is_terminal() {
-        run_pipe_mode(&config);
-        return;
-    }
-
     // Optional: open a file passed as the first positional arg.
     let initial_file = args.get(1).map(PathBuf::from);
     match run_tui_mode(config, initial_file) {
@@ -48,42 +38,6 @@ fn main() {
             std::process::exit(1);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Pipe mode
-// ---------------------------------------------------------------------------
-
-fn run_pipe_mode(config: &EditorConfig) {
-    let mut env = apl::parser::Environment::new();
-    let mut buf = String::new();
-    io::stdin().read_to_string(&mut buf).unwrap_or_default();
-    for line in buf.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match env.eval_line(trimmed) {
-            Ok(Some(v)) => {
-                let pp = apl::sysvars::get_pp(&env).unwrap_or(10);
-                let all_chars =
-                    !v.cells().is_empty() && v.cells().iter().all(|c| c.is_character_cell());
-                if v.rank() >= 2 || all_chars {
-                    for l in apl::boxdisplay::render_plain_with_pp(&v, pp) {
-                        println!("{l}");
-                    }
-                } else {
-                    println!("{}", stride::ui::format_value_for(&v, pp));
-                }
-            }
-            Ok(None) => {}
-            Err(e) => {
-                let rich = apl::AplError::from(e).with_source_line(trimmed.to_string());
-                eprintln!("ERROR: {rich}");
-            }
-        }
-    }
-    let _ = config;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,33 +128,6 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     res
 }
 
-/// Spawn the gateway executable. Returns when the process has been launched
-/// (not when it's ready to accept connections).
-fn spawn_gateway(config: &stride::config::EditorConfig) -> std::io::Result<()> {
-    use std::process::Command;
-
-    let exec = &config.gateway_executable;
-    let args = config.gateway_args.split_whitespace().collect::<Vec<_>>();
-
-    let mut cmd = Command::new(exec);
-    cmd.args(&args)
-        .arg(config.gateway_port.to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    // Set environment variables (e.g., RIDE_INIT)
-    for env_var in &config.gateway_env {
-        if let Some((key, value)) = env_var.split_once('=') {
-            cmd.env(key, value);
-        }
-    }
-
-    cmd.spawn()?;
-
-    Ok(())
-}
-
 /// Returns true when the app should quit.
 fn handle_key(
     state: &mut EditorState,
@@ -245,7 +172,7 @@ fn handle_key(
             let lines: Vec<String> = state.buffer().lines().iter().cloned().collect();
             for line in &lines {
                 let trimmed = line.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with(')') {
+                if !trimmed.is_empty() {
                     eval_line(state, interpreter, trimmed);
                 }
             }
@@ -383,19 +310,6 @@ fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sen
 }
 
 fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str) {
-    // Intercept )system commands and handle locally
-    if line.starts_with(')') {
-        match apl::sysvars::syscmd(line[1..].trim(), &mut state.env) {
-            None => {} // )OFF — ignore in stride
-            Some(lines) => {
-                for l in lines {
-                    state.push_result(l);
-                }
-            }
-        }
-        return;
-    }
-
     let (tx, rx) = channel::<String>();
     
     // Try to send to connected interpreter
@@ -418,7 +332,10 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
                 // Parse JSON response: ["AppendSessionOutput", {"result":"...", "type":0}]
                 let display = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&result) {
                     if let Some(arr) = val.as_array() {
-                        arr.get(1).and_then(|o| o["result"].as_str()).unwrap_or(&result).to_string()
+                        arr.get(1)
+                            .and_then(|o| o["result"].as_str())
+                            .unwrap_or(&result)
+                            .to_string()
                     } else {
                         result
                     }
@@ -438,21 +355,8 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
             }
         }
     } else {
-        // No gateway: evaluate locally with the persistent interpreter.
-        match state.env.eval_line(line) {
-            Ok(Some(v)) => {
-                let pp = apl::sysvars::get_pp(&state.env).unwrap_or(10);
-                let text = stride::ui::format_value_for(&v, pp);
-                state.push_result(text);
-                state.status = "evaluated locally".to_string();
-            }
-            Ok(None) => state.status = "no result (assignment)".to_string(),
-            Err(e) => {
-                let rich = apl::AplError::from(e).with_source_line(line.to_string());
-                state.push_result(format!("ERROR {rich}"));
-                state.status = "eval error".to_string();
-            }
-        }
+        state.push_result("ERROR: no interpreter connected".to_string());
+        state.status = "no interpreter — start Kap or rust-apl with --ride".to_string();
     }
 }
 
@@ -460,22 +364,20 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
 fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
         match dialog {
-            Dialog::Help { scroll } => {
-                match code {
-                    KeyCode::Esc | KeyCode::Enter => {
-                        state.dialog = None;
-                    }
-                    KeyCode::Up => {
-                        if *scroll > 0 {
-                            *scroll -= 1;
-                        }
-                    }
-                    KeyCode::Down => {
-                        *scroll += 1;
-                    }
-                    _ => {}
+            Dialog::Help { scroll } => match code {
+                KeyCode::Esc | KeyCode::Enter => {
+                    state.dialog = None;
                 }
-            }
+                KeyCode::Up => {
+                    if *scroll > 0 {
+                        *scroll -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    *scroll += 1;
+                }
+                _ => {}
+            },
             Dialog::OpenFile { path, cursor, files } => {
                 match code {
                     KeyCode::Esc => {

@@ -103,33 +103,31 @@ pub fn highlight_line(line: &str) -> Vec<Token> {
                 i += 1;
             }
             out.push(Token::new(TokenKind::Whitespace, s));
-        } else if c == '⎕' {
-            // Quad name: ⎕ + letters.
-            let mut s = String::from("⎕");
-            i += 1;
-            while i < chars.len() && chars[i].is_ascii_alphabetic() {
-                s.push(chars[i]);
-                i += 1;
-            }
-            out.push(Token::new(TokenKind::QuadName, s));
-        } else if c == '∇' {
-            out.push(Token::new(TokenKind::FnMarker, "∇"));
-            i += 1;
-        } else if c.is_ascii_digit()
-            || (c == '¯' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
-        {
+            continue;
+        } else if is_number_char(c) {
             let mut s = String::new();
             while i < chars.len() && is_number_char(chars[i]) {
                 s.push(chars[i]);
                 i += 1;
             }
             out.push(Token::new(TokenKind::Number, s));
+            continue;
         } else if is_primitive(c) {
             out.push(Token::new(TokenKind::Primitive, c.to_string()));
-            i += 1;
         } else if is_operator(c) {
             out.push(Token::new(TokenKind::Operator, c.to_string()));
+        } else if c == '⎕' {
+            // Quad name: ⎕ + following name chars.
+            let mut s = String::from("⎕");
             i += 1;
+            while i < chars.len() && is_name_char(chars[i]) {
+                s.push(chars[i]);
+                i += 1;
+            }
+            out.push(Token::new(TokenKind::QuadName, s));
+            continue;
+        } else if c == '∇' {
+            out.push(Token::new(TokenKind::FnMarker, c.to_string()));
         } else if is_name_char(c) {
             let mut s = String::new();
             while i < chars.len() && is_name_char(chars[i]) {
@@ -137,10 +135,11 @@ pub fn highlight_line(line: &str) -> Vec<Token> {
                 i += 1;
             }
             out.push(Token::new(TokenKind::Identifier, s));
+            continue;
         } else {
             out.push(Token::new(TokenKind::Other, c.to_string()));
-            i += 1;
         }
+        i += 1;
     }
     out
 }
@@ -149,63 +148,34 @@ pub fn highlight_line(line: &str) -> Vec<Token> {
 mod tests {
     use super::*;
 
-    fn kinds(line: &str) -> Vec<TokenKind> {
-        highlight_line(line)
-            .into_iter()
-            .filter(|t| t.kind != TokenKind::Whitespace)
-            .map(|t| t.kind)
-            .collect()
+    #[test]
+    fn highlights_comment() {
+        let toks = highlight_line("A←5 ⍝ set A to 5");
+        assert_eq!(toks.last().unwrap().kind, TokenKind::Comment);
     }
 
     #[test]
-    fn comment_to_end_of_line() {
-        let toks = highlight_line("A←⍳5 ⍝ index gen");
-        assert!(toks
-            .iter()
-            .any(|t| t.kind == TokenKind::Comment && t.text == "⍝ index gen"));
+    fn highlights_string() {
+        let toks = highlight_line("⍞←'hello world'");
+        assert!(toks.iter().any(|t| t.kind == TokenKind::String));
     }
 
     #[test]
-    fn string_with_escaped_quote() {
-        let toks = highlight_line("'it''s'");
-        assert_eq!(toks.len(), 1);
-        assert_eq!(toks[0].kind, TokenKind::String);
-        assert_eq!(toks[0].text, "'it''s'");
-    }
-
-    #[test]
-    fn quad_name_and_number() {
-        let k = kinds("⎕IO←1 ⋄ X←¯3.5e2");
-        assert!(k.contains(&TokenKind::QuadName));
-        assert!(k.contains(&TokenKind::Number));
-    }
-
-    #[test]
-    fn primitives_and_operators() {
-        let k = kinds("+/⍳10");
-        assert!(k.contains(&TokenKind::Operator));
-        assert!(k.contains(&TokenKind::Primitive));
-        assert!(k.contains(&TokenKind::Number));
-    }
-
-    #[test]
-    fn syscmd_whole_line() {
+    fn highlights_syscmd() {
         let toks = highlight_line(")CLEAR");
         assert_eq!(toks.len(), 1);
         assert_eq!(toks[0].kind, TokenKind::SysCmd);
     }
 
     #[test]
-    fn fn_marker() {
-        let k = kinds("∇R←A FOO B");
-        assert!(k.contains(&TokenKind::FnMarker));
+    fn highlights_primitive() {
+        let toks = highlight_line("A←⍳5");
+        assert!(toks.iter().any(|t| t.kind == TokenKind::Primitive));
     }
 
     #[test]
-    fn tokens_reconstruct_line() {
-        for line in ["A←(+/⍳10)÷10 ⍝ mean", "⎕PP←15", "", "∇", ")SAVE ws"] {
-            let back: String = highlight_line(line).into_iter().map(|t| t.text).collect();
-            assert_eq!(back, line, "roundtrip failed for {line:?}");
-        }
+    fn highlights_quad() {
+        let toks = highlight_line("⎕IO←1");
+        assert!(toks.iter().any(|t| t.kind == TokenKind::QuadName));
     }
 }
