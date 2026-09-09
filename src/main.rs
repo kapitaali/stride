@@ -15,8 +15,9 @@ use ratatui::Terminal;
 
 use stride::config::EditorConfig;
 use stride::editor::Buffer;
-use stride::gateway::GatewayClient;
+use stride::gateway::{GatewayCommand, GatewayMessage, GatewayServer};
 use stride::ui::{self, Dialog, EditorState};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -33,7 +34,7 @@ fn main() {
     match run_tui_mode(config, initial_file) {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("apl-editor TUI error: {e}");
+            eprintln!("stride TUI error: {e}");
             std::process::exit(1);
         }
     }
@@ -92,46 +93,10 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         }
     }
 
-    // Try to connect to the gateway. If not running, spawn it.
-    let mut gateway: Option<GatewayClient> = None;
-    if state.config.auto_connect {
-        match GatewayClient::connect(&state.config.gateway_host, state.config.gateway_port) {
-            Ok(mut c) => match c.handshake() {
-                Ok(()) => {
-                    state.gateway_status = format!("connected to {}", c.addr());
-                    gateway = Some(c);
-                }
-                Err(e) => state.gateway_status = format!("handshake failed: {e}"),
-            },
-            Err(_) => {
-                // Gateway not running — spawn it.
-                state.gateway_status = "starting gateway...".to_string();
-                match spawn_gateway(&state.config) {
-                    Ok(_) => {
-                        // Wait for it to start listening.
-                        for _ in 0..50 {
-                            std::thread::sleep(Duration::from_millis(100));
-                            if let Ok(mut c) = GatewayClient::connect(
-                                &state.config.gateway_host,
-                                state.config.gateway_port,
-                            ) {
-                                if c.handshake().is_ok() {
-                                    state.gateway_status =
-                                        format!("connected to {}", c.addr());
-                                    gateway = Some(c);
-                                    break;
-                                }
-                            }
-                        }
-                        if gateway.is_none() {
-                            state.gateway_status = "gateway start timeout".to_string();
-                        }
-                    }
-                    Err(e) => state.gateway_status = format!("gateway start failed: {e}"),
-                }
-            }
-        }
-    }
+    // Start the gateway server (listens for interpreters to connect).
+    let (server, gateway_rx, gateway_tx) = GatewayServer::new(state.config.gateway_port);
+    server.run();
+    state.gateway_status = format!("listening on port {}", state.config.gateway_port);
 
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -144,6 +109,21 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
             .draw(|f| ui::draw(f, &state))
             .map_err(|e| std::io::Error::other(format!("render: {e}")))?;
 
+        // Check for messages from the gateway server.
+        match gateway_rx.try_recv() {
+            Ok(GatewayMessage::Connected { addr }) => {
+                state.gateway_status = format!("connected to {addr}");
+            }
+            Ok(GatewayMessage::Disconnected) => {
+                state.gateway_status = format!("listening on port {}", state.config.gateway_port);
+            }
+            Ok(GatewayMessage::Output { result, .. }) => {
+                state.push_result(result);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => break Ok(()),
+        }
+
         if event::poll(Duration::from_millis(150))? {
             if let Event::Key(key) = event::read()? {
                 if state.dialog.is_some() {
@@ -151,12 +131,12 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
                     continue;
                 }
                 if state.menu_open {
-                    if handle_menu_key(&mut state, &mut gateway, key.code) {
+                    if handle_menu_key(&mut state, &gateway_tx, key.code) {
                         break Ok(());
                     }
                     continue;
                 }
-                if handle_key(&mut state, &mut gateway, key.code, key.modifiers) {
+                if handle_key(&mut state, &gateway_tx, key.code, key.modifiers) {
                     break Ok(());
                 }
             }
@@ -201,14 +181,14 @@ fn spawn_gateway(config: &stride::config::EditorConfig) -> std::io::Result<()> {
 /// Returns true when the app should quit.
 fn handle_key(
     state: &mut EditorState,
-    gateway: &mut Option<GatewayClient>,
+    gateway_tx: &Sender<GatewayCommand>,
     code: KeyCode,
     mods: KeyModifiers,
 ) -> bool {
     match (code, mods) {
         (KeyCode::Char('q'), KeyModifiers::CONTROL) => return true,
         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-            eval_current_line(state, gateway);
+            eval_current_line(state, gateway_tx);
         }
         (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
@@ -243,7 +223,7 @@ fn handle_key(
             for line in &lines {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with(')') {
-                    eval_line(state, gateway, trimmed);
+                    eval_line(state, gateway_tx, trimmed);
                 }
             }
         }
@@ -317,7 +297,7 @@ fn handle_key(
 
 fn handle_menu_key(
     state: &mut EditorState,
-    gateway: &mut Option<GatewayClient>,
+    gateway_tx: &Sender<GatewayCommand>,
     code: KeyCode,
 ) -> bool {
     match code {
@@ -330,14 +310,14 @@ fn handle_menu_key(
         KeyCode::Enter => {
             let item = state.menu_focus;
             state.menu_open = false;
-            return menu_action(state, gateway, item);
+            return menu_action(state, gateway_tx, item);
         }
         _ => {}
     }
     false
 }
 
-fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, item: usize) -> bool {
+fn menu_action(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, item: usize) -> bool {
     match item {
         0 => {
             *state = EditorState::new(state.config.clone());
@@ -358,7 +338,7 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
         4..=8 => state.status = "edit action not yet implemented".to_string(),
         9 => {
             state.status = format!(
-                "apl-editor {} — {}",
+                "stride {} — {}",
                 env!("CARGO_PKG_VERSION"),
                 state.config.apl_version
             )
@@ -366,28 +346,36 @@ fn menu_action(state: &mut EditorState, gateway: &mut Option<GatewayClient>, ite
         10 => return true, // Quit
         _ => {}
     }
-    let _ = gateway;
+    let _ = gateway_tx;
     false
 }
 
-fn eval_current_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>) {
+fn eval_current_line(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>) {
     let line = state.buffer_mut().current_line().trim().to_string();
     if line.is_empty() {
         return;
     }
-    eval_line(state, gateway, &line);
+    eval_line(state, gateway_tx, &line);
 }
 
-fn eval_line(state: &mut EditorState, gateway: &mut Option<GatewayClient>, line: &str) {
-    if let Some(gw) = gateway {
-        match gw.eval(line) {
+fn eval_line(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, line: &str) {
+    let (tx, rx) = channel::<String>();
+    if gateway_tx
+        .send(GatewayCommand::Execute {
+            text: line.to_string(),
+            response_tx: tx,
+        })
+        .is_ok()
+    {
+        // Wait for response (with timeout)
+        match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(result) => {
                 state.push_result(format!("⎕ {result}"));
                 state.status = "evaluated via gateway".to_string();
             }
-            Err(msg) => {
-                state.push_result(format!("ERROR {msg}"));
-                state.status = "gateway eval failed".to_string();
+            Err(_) => {
+                state.push_result("ERROR: gateway timeout".to_string());
+                state.status = "gateway timeout".to_string();
             }
         }
     } else {
