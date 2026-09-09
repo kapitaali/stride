@@ -32,6 +32,9 @@ cargo run -- ~/Apps/rust-apl/examples/calc-demo.apl
 
 # Pipe mode (evaluate a script, print results)
 cargo run --quiet < demo.apl
+
+# Run with a different port (useful for multiple instances)
+cargo run -- --port 4503
 ```
 
 The editor will automatically start the gateway executable if it's not already running on the configured port. You can also start it manually:
@@ -47,23 +50,23 @@ cd ../rust-apl && cargo run -- --serve 4502
 |-----|--------|
 | **TAB** | Cycle palette row (category) |
 | **Ctrl + P** | Toggle expanded palette (5 rows) |
+| **Ctrl + L** | Cycle results display mode (compact/expanded/split) |
 | **Left / Right** | Move text cursor horizontally |
+| **Up / Down** | Move cursor vertically |
 | **Ctrl + Left / Right** | Select glyph within the palette row |
 | **Ctrl + Space** | Insert the focused glyph at the cursor |
 | **Space** | Normal space character |
 | **Enter** | Newline |
 | **Backspace** | Delete character before cursor |
 | **Delete** | Delete character under cursor |
-| **Up / Down** | Move cursor vertically |
-| **Ctrl + Left / Right** | Move cursor horizontally |
 | **Home / End** | Jump to start / end of line |
 | **Ctrl + E** | Evaluate the current line |
+| **Ctrl + B** | Execute all lines of current buffer |
 | **Ctrl + S** | Save the current file |
 | **Ctrl + O** | Open file into new buffer |
 | **Ctrl + N** | New buffer (cycles after 9) |
 | **Ctrl + 1** – **Ctrl + 9** | Switch to buffer N |
 | **Ctrl + W** | Close current buffer |
-| **Ctrl + B** | Execute all lines of current buffer |
 | **ESC** | Open / close the menu |
 | **Ctrl + Q** | Quit |
 
@@ -76,10 +79,22 @@ gateway_host = "127.0.0.1"
 gateway_port = 4502
 gateway_executable = "../rust-apl/target/debug/apl"
 gateway_args = "--serve"
+gateway_env = []
 apl_version = "GNU APL 2.0 (Rust)"
 auto_connect = true
 max_results = 500
 ```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `gateway_host` | `127.0.0.1` | Host of the interpreter gateway |
+| `gateway_port` | `4502` | Port of the interpreter gateway (RIDE default) |
+| `gateway_executable` | `../rust-apl/target/debug/apl` | Path to the interpreter executable |
+| `gateway_args` | `--serve` | Arguments passed to the gateway executable |
+| `gateway_env` | `[]` | Environment variables to set when spawning the gateway (e.g., `RIDE_INIT=CONNECT:localhost:4502` for Kap) |
+| `apl_version` | `GNU APL 2.0 (Rust)` | Version string shown in the status bar |
+| `auto_connect` | `true` | Connect to the gateway automatically at startup |
+| `max_results` | `500` | Maximum result-pane lines kept in memory |
 
 The editor will automatically start `gateway_executable` if it's not already running on the configured port. You can also start it manually with `cargo run -- --serve 4502`.
 
