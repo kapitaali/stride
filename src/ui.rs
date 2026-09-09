@@ -306,8 +306,9 @@ pub fn render_results(state: &EditorState) -> Paragraph<'static> {
                 .borders(Borders::ALL)
                 .title("Results (gateway)"),
         )
-        // Scroll so the bottom (most recent) is always visible.
-        .scroll((state.results.len().saturating_sub(1) as u16, 0))
+        // Scroll to the bottom so the most recent output is always visible.
+        // Using u16::MAX lets ratatui clamp to the maximum valid scroll.
+        .scroll((u16::MAX, 0))
 }
 
 /// Build the status bar widget.
