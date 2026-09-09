@@ -22,7 +22,16 @@ use std::sync::{Arc, Mutex};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
+    let mut config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
+
+    // Parse --port argument
+    if let Some(pos) = args.iter().position(|a| a == "--port") {
+        if let Some(port_str) = args.get(pos + 1) {
+            if let Ok(port) = port_str.parse::<u16>() {
+                config.gateway_port = port;
+            }
+        }
+    }
 
     // Pipe mode: stdin is not a terminal → evaluate each line, print results.
     if !io::stdin().is_terminal() {
@@ -94,8 +103,17 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         }
     }
 
+    // Check if port is available before starting TUI
+    let port = state.config.gateway_port;
+    if let Err(e) = std::net::TcpListener::bind(format!("127.0.0.1:{port}")) {
+        eprintln!("Cannot start stride: port {port} is already in use ({e}).");
+        eprintln!("Another stride instance may be running. Use )OFF or Ctrl+Q to quit it first.");
+        eprintln!("Or specify a different port with --port <number>.");
+        std::process::exit(1);
+    }
+
     // Start the gateway server (listens for interpreters to connect).
-    let (server, gateway_rx, _gateway_tx) = GatewayServer::new(state.config.gateway_port);
+    let (server, gateway_rx, _gateway_tx) = GatewayServer::new(port);
     let interpreter = server.interpreter();
     let server_port = server.port;
     std::thread::spawn(move || {
