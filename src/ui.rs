@@ -16,7 +16,6 @@ use crate::editor::Buffer;
 use crate::syntax::{self, TokenKind};
 
 /// Live editor state the UI reads every frame.
-#[derive(Debug, Clone)]
 pub struct EditorState {
     pub buffers: Vec<Buffer>,
     pub active_buffer: usize,
@@ -41,6 +40,8 @@ pub struct EditorState {
     /// ⎕IO / ⎕SEC snapshot for the status bar.
     pub io_label: String,
     pub sec_label: String,
+    /// Local interpreter environment (persists across evaluations when no gateway).
+    pub env: apl::parser::Environment,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,7 @@ impl EditorState {
             status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+B: run all  ESC: menu  Ctrl-E: eval  Ctrl-Q: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
+            env: apl::parser::Environment::new(),
         }
     }
 
@@ -285,18 +287,21 @@ pub fn render_editor(state: &EditorState) -> Paragraph<'static> {
     )
 }
 
-/// Build the result pane widget.
+/// Build the result pane widget. Shows the last N lines that fit in the pane.
 pub fn render_results(state: &EditorState) -> Paragraph<'static> {
     let text = if state.results.is_empty() {
         "(no results yet — Ctrl-E evaluates the current line)".to_string()
     } else {
         state.results.join("\n")
     };
-    Paragraph::new(text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Results (gateway)"),
-    )
+    Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Results (gateway)"),
+        )
+        // Scroll so the bottom (most recent) is always visible.
+        .scroll((state.results.len().saturating_sub(1) as u16, 0))
 }
 
 /// Build the status bar widget.

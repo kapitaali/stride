@@ -34,65 +34,76 @@ pub enum GatewayCommand {
 
 /// Gateway server that listens for interpreters to connect.
 pub struct GatewayServer {
-    port: u16,
+    pub port: u16,
     /// Send messages to the UI.
     tx: Sender<GatewayMessage>,
-    /// Connected interpreters (their command senders).
-    interpreters: Arc<Mutex<Vec<Sender<GatewayCommand>>>>,
+    /// Current interpreter connection (if any).
+    interpreter: Arc<Mutex<Option<Sender<GatewayCommand>>>>,
 }
 
 impl GatewayServer {
     /// Create a new gateway server on the given port.
     pub fn new(port: u16) -> (Self, Receiver<GatewayMessage>, Sender<GatewayCommand>) {
         let (tx, ui_rx) = channel::<GatewayMessage>();
-        let (ui_tx, rx) = channel::<GatewayCommand>();
-        let interpreters = Arc::new(Mutex::new(Vec::new()));
+        let (ui_tx, _rx) = channel::<GatewayCommand>();
+        let interpreter = Arc::new(Mutex::new(None));
 
         (
-            GatewayServer { port, tx, interpreters },
+            GatewayServer { port, tx, interpreter },
             ui_rx,
             ui_tx,
         )
     }
 
-    /// Start the gateway server in a background thread.
-    pub fn run(self) {
+    /// Get a reference to the interpreter sender (for the UI to send commands).
+    pub fn interpreter(&self) -> Arc<Mutex<Option<Sender<GatewayCommand>>>> {
+        self.interpreter.clone()
+    }
+
+    /// Start the gateway server. This method blocks.
+    pub fn run(self) -> std::io::Result<()> {
+        println!("gateway: attempting to bind port {}...", self.port);
         let listener = match TcpListener::bind(format!("127.0.0.1:{}", self.port)) {
-            Ok(l) => l,
+            Ok(l) => {
+                println!("gateway: successfully bound to port {}", self.port);
+                l
+            }
             Err(e) => {
                 eprintln!("gateway: cannot bind port {}: {}", self.port, e);
-                return;
+                return Err(e);
             }
         };
 
         println!("Gateway server listening on port {}", self.port);
 
-        let tx = self.tx;
-        let interpreters = self.interpreters;
+        let tx = self.tx.clone();
+        let interpreter = self.interpreter.clone();
 
-        // Accept connections in a background thread.
-        thread::spawn(move || {
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(stream) => {
-                        let addr = stream
-                            .peer_addr()
-                            .map(|a| a.to_string())
-                            .unwrap_or_default();
-                        let tx = tx.clone();
-                        let interpreters = interpreters.clone();
+        // Accept connections.
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let addr = stream
+                        .peer_addr()
+                        .map(|a| a.to_string())
+                        .unwrap_or_default();
+                    println!("gateway: interpreter connected from {addr}");
+                    let tx = tx.clone();
+                    let interpreter = interpreter.clone();
 
-                        // Handle this connection in a new thread.
-                        thread::spawn(move || {
-                            handle_interpreter(stream, tx, interpreters, addr);
-                        });
-                    }
-                    Err(e) => {
-                        eprintln!("Connection failed: {}", e);
-                    }
+                    // Handle this connection in a new thread.
+                    thread::spawn(move || {
+                        handle_interpreter(stream, tx, interpreter, addr);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Connection failed: {}", e);
                 }
             }
-        });
+        }
+
+        println!("gateway: listener loop exited");
+        Ok(())
     }
 }
 
@@ -100,7 +111,7 @@ impl GatewayServer {
 fn handle_interpreter(
     mut stream: TcpStream,
     tx: Sender<GatewayMessage>,
-    interpreters: Arc<Mutex<Vec<Sender<GatewayCommand>>>>,
+    interpreter: Arc<Mutex<Option<Sender<GatewayCommand>>>>,
     addr: String,
 ) {
     // Perform the handshake.
@@ -110,11 +121,11 @@ fn handle_interpreter(
 
     // Create a channel for sending commands to this interpreter.
     let (cmd_tx, cmd_rx) = channel::<GatewayCommand>();
-    
+
     // Register this interpreter.
     {
-        let mut ints = interpreters.lock().unwrap();
-        ints.push(cmd_tx.clone());
+        let mut ints = interpreter.lock().unwrap();
+        *ints = Some(cmd_tx.clone());
     }
 
     // Notify UI that interpreter is connected.
@@ -136,48 +147,18 @@ fn handle_interpreter(
 
     // Unregister this interpreter.
     {
-        let mut ints = interpreters.lock().unwrap();
-        ints.clear(); // v1: only one interpreter at a time
+        let mut ints = interpreter.lock().unwrap();
+        *ints = None;
     }
 
     // Channel closed, interpreter disconnected.
     let _ = tx.send(GatewayMessage::Disconnected);
 }
 
-/// Read a framed message from the stream.
-fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
-    let mut header = [0u8; 8];
-    stream.read_exact(&mut header).map_err(|e| format!("read error: {}", e))?;
-    
-    let frame_len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    if frame_len < 8 {
-        return Err("frame too short".to_string());
-    }
-    
-    // Verify "RIDE" magic
-    if &header[4..8] != b"RIDE" {
-        return Err("invalid frame magic".to_string());
-    }
-    
-    let payload_len = frame_len - 8;
-    let mut payload = vec![0u8; payload_len];
-    stream.read_exact(&mut payload).map_err(|e| format!("read error: {}", e))?;
-    
-    String::from_utf8(payload).map_err(|_| "invalid UTF-8".to_string())
-}
-
-/// Write a framed message to the stream.
-fn write_frame(stream: &mut TcpStream, payload: &str) -> Result<(), String> {
-    let frame = frame(payload);
-    stream.write_all(&frame).map_err(|e| format!("write error: {}", e))?;
-    stream.flush().map_err(|e| format!("flush error: {}", e))?;
-    Ok(())
-}
-
 /// Perform the RIDE handshake with the interpreter.
 fn perform_handshake(stream: &mut TcpStream) -> bool {
-    // Step 1: Read SupportedProtocols=2 from interpreter (raw string)
-    let mut buf = [0u8; 1024];
+    // Step 1: Read SupportedProtocols=2 from interpreter
+    let mut buf = [0u8; 4096];
     let n = match stream.read(&mut buf) {
         Ok(0) => return false,
         Ok(n) => n,
@@ -189,12 +170,14 @@ fn perform_handshake(stream: &mut TcpStream) -> bool {
         return false;
     }
 
-    // Step 2: Send UsingProtocol=2 (raw string)
-    if stream.write_all(b"UsingProtocol=2").is_err() {
+    // Step 2: Send UsingProtocol=2
+    let response = "UsingProtocol=2";
+    let frame = frame(response);
+    if stream.write_all(&frame).is_err() {
         return false;
     }
 
-    // Step 3: Read ["Identify", {...}] from interpreter (framed)
+    // Step 3: Read ["Identify", {...}] from interpreter
     let identify = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return false,
@@ -204,7 +187,7 @@ fn perform_handshake(stream: &mut TcpStream) -> bool {
         return false;
     }
 
-    // Step 4: Send ["ReplyIdentify", {...}] (framed)
+    // Step 4: Send ["ReplyIdentify", {...}]
     let reply = serde_json::json!(["ReplyIdentify", {
         "identity": 1,
         "protocolVersion": 2,
@@ -214,7 +197,7 @@ fn perform_handshake(stream: &mut TcpStream) -> bool {
         return false;
     }
 
-    // Step 5: Read ["Connect", {...}] from interpreter (framed)
+    // Step 5: Read ["Connect", {...}] from interpreter
     let connect = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return false,
@@ -224,7 +207,7 @@ fn perform_handshake(stream: &mut TcpStream) -> bool {
         return false;
     }
 
-    // Step 6: Send ["ReplyConnect", {...}] (framed)
+    // Step 6: Send ["ReplyConnect", {...}]
     let reply = serde_json::json!(["ReplyConnect", {
         "remoteId": 2,
         "protocolVersion": 2
@@ -248,6 +231,36 @@ fn execute_expression(stream: &mut TcpStream, text: &str) -> String {
         Ok(response) => response,
         Err(e) => format!("ERROR: {}", e),
     }
+}
+
+/// Read a framed message from the stream.
+fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
+    let mut header = [0u8; 8];
+    stream.read_exact(&mut header).map_err(|e| format!("read error: {}", e))?;
+
+    let frame_len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
+    if frame_len < 8 {
+        return Err("frame too short".to_string());
+    }
+
+    // Verify "RIDE" magic
+    if &header[4..8] != b"RIDE" {
+        return Err("invalid frame magic".to_string());
+    }
+
+    let payload_len = frame_len - 8;
+    let mut payload = vec![0u8; payload_len];
+    stream.read_exact(&mut payload).map_err(|e| format!("read error: {}", e))?;
+
+    String::from_utf8(payload).map_err(|_| "invalid UTF-8".to_string())
+}
+
+/// Write a framed message to the stream.
+fn write_frame(stream: &mut TcpStream, payload: &str) -> Result<(), String> {
+    let frame = frame(payload);
+    stream.write_all(&frame).map_err(|e| format!("write error: {}", e))?;
+    stream.flush().map_err(|e| format!("flush error: {}", e))?;
+    Ok(())
 }
 
 /// Frame a JSON payload for the RIDE protocol.

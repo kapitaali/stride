@@ -18,6 +18,7 @@ use stride::editor::Buffer;
 use stride::gateway::{GatewayCommand, GatewayMessage, GatewayServer};
 use stride::ui::{self, Dialog, EditorState};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -94,9 +95,13 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     }
 
     // Start the gateway server (listens for interpreters to connect).
-    let (server, gateway_rx, gateway_tx) = GatewayServer::new(state.config.gateway_port);
-    server.run();
-    state.gateway_status = format!("listening on port {}", state.config.gateway_port);
+    let (server, gateway_rx, _gateway_tx) = GatewayServer::new(state.config.gateway_port);
+    let interpreter = server.interpreter();
+    let server_port = server.port;
+    std::thread::spawn(move || {
+        let _ = server.run();
+    });
+    state.gateway_status = format!("listening on port {}", server_port);
 
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -131,12 +136,12 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
                     continue;
                 }
                 if state.menu_open {
-                    if handle_menu_key(&mut state, &gateway_tx, key.code) {
+                    if handle_menu_key(&mut state, &interpreter, key.code) {
                         break Ok(());
                     }
                     continue;
                 }
-                if handle_key(&mut state, &gateway_tx, key.code, key.modifiers) {
+                if handle_key(&mut state, &interpreter, key.code, key.modifiers) {
                     break Ok(());
                 }
             }
@@ -181,14 +186,14 @@ fn spawn_gateway(config: &stride::config::EditorConfig) -> std::io::Result<()> {
 /// Returns true when the app should quit.
 fn handle_key(
     state: &mut EditorState,
-    gateway_tx: &Sender<GatewayCommand>,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
     code: KeyCode,
     mods: KeyModifiers,
 ) -> bool {
     match (code, mods) {
         (KeyCode::Char('q'), KeyModifiers::CONTROL) => return true,
         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-            eval_current_line(state, gateway_tx);
+            eval_current_line(state, interpreter);
         }
         (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
@@ -223,7 +228,7 @@ fn handle_key(
             for line in &lines {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with(')') {
-                    eval_line(state, gateway_tx, trimmed);
+                    eval_line(state, interpreter, trimmed);
                 }
             }
         }
@@ -297,7 +302,7 @@ fn handle_key(
 
 fn handle_menu_key(
     state: &mut EditorState,
-    gateway_tx: &Sender<GatewayCommand>,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
     code: KeyCode,
 ) -> bool {
     match code {
@@ -310,14 +315,14 @@ fn handle_menu_key(
         KeyCode::Enter => {
             let item = state.menu_focus;
             state.menu_open = false;
-            return menu_action(state, gateway_tx, item);
+            return menu_action(state, interpreter, item);
         }
         _ => {}
     }
     false
 }
 
-fn menu_action(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, item: usize) -> bool {
+fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, item: usize) -> bool {
     match item {
         0 => {
             *state = EditorState::new(state.config.clone());
@@ -346,32 +351,54 @@ fn menu_action(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, ite
         10 => return true, // Quit
         _ => {}
     }
-    let _ = gateway_tx;
+    let _ = interpreter;
     false
 }
 
-fn eval_current_line(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>) {
+fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>) {
     let line = state.buffer_mut().current_line().trim().to_string();
     if line.is_empty() {
         return;
     }
-    eval_line(state, gateway_tx, &line);
+    eval_line(state, interpreter, &line);
 }
 
-fn eval_line(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, line: &str) {
+fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str) {
     let (tx, rx) = channel::<String>();
-    if gateway_tx
-        .send(GatewayCommand::Execute {
-            text: line.to_string(),
-            response_tx: tx,
-        })
-        .is_ok()
-    {
+    
+    // Try to send to connected interpreter
+    let sent = {
+        let ints = interpreter.lock().unwrap();
+        if let Some(ref sender) = *ints {
+            sender.send(GatewayCommand::Execute {
+                text: line.to_string(),
+                response_tx: tx,
+            }).is_ok()
+        } else {
+            false
+        }
+    };
+    
+    if sent {
         // Wait for response (with timeout)
         match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(result) => {
-                state.push_result(format!("⎕ {result}"));
-                state.status = "evaluated via gateway".to_string();
+                // Parse JSON response: ["AppendSessionOutput", {"result":"...", "type":0}]
+                let display = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&result) {
+                    if let Some(arr) = val.as_array() {
+                        arr.get(1).and_then(|o| o["result"].as_str()).unwrap_or(&result).to_string()
+                    } else {
+                        result
+                    }
+                } else {
+                    result
+                };
+                if display.is_empty() {
+                    state.status = "no result (assignment)".to_string();
+                } else {
+                    state.push_result(format!("⎕ {display}"));
+                    state.status = "evaluated via gateway".to_string();
+                }
             }
             Err(_) => {
                 state.push_result("ERROR: gateway timeout".to_string());
@@ -379,11 +406,10 @@ fn eval_line(state: &mut EditorState, gateway_tx: &Sender<GatewayCommand>, line:
             }
         }
     } else {
-        // No gateway: evaluate locally with the interpreter.
-        let mut env = apl::parser::Environment::new();
-        match env.eval_line(line) {
+        // No gateway: evaluate locally with the persistent interpreter.
+        match state.env.eval_line(line) {
             Ok(Some(v)) => {
-                let pp = apl::sysvars::get_pp(&env).unwrap_or(10);
+                let pp = apl::sysvars::get_pp(&state.env).unwrap_or(10);
                 let text = stride::ui::format_value_for(&v, pp);
                 state.push_result(text);
                 state.status = "evaluated locally".to_string();

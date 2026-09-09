@@ -172,6 +172,7 @@ pub static PALETTE_ROWS: &[PaletteRow] = &[
         ("∥", "parallel"),
         ("λ", "lambda (dfn)"),
         ("⍞", "char input"),
+        ("√", "square root"),
         ("⍎", "execute"),
         ("⍕", "format"),
         ("⍰", "null / placeholder"),
