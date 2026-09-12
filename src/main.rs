@@ -32,10 +32,20 @@ fn main() {
     debug_log("[main] starting stride...");
     let args: Vec<String> = env::args().collect();
     debug_log(&format!("[main] args: {:?}", args));
-    let mut config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
+    let config_path = EditorConfig::resolve_path();
+    let mut config = EditorConfig::load(&config_path).unwrap_or_default();
     debug_log(&format!(
-        "[main] config loaded: port={}, executable={}",
-        config.gateway_port, config.gateway_executable
+        "[main] config: {} ({})",
+        config_path.display(),
+        if config_path.exists() {
+            "loaded"
+        } else {
+            "not found; using defaults"
+        }
+    ));
+    debug_log(&format!(
+        "[main] config loaded: host={}, port={}, executable={}",
+        config.gateway_host, config.gateway_port, config.gateway_executable
     ));
 
     // Parse --port argument
@@ -96,11 +106,10 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let (server, gateway_rx, _gateway_tx) =
         GatewayServer::new(state.config.gateway_host.clone(), port);
     let interpreter = server.interpreter();
-    let server_port = server.port;
     std::thread::spawn(move || {
         let _ = server.run(listener);
     });
-    state.gateway_status = format!("listening on port {}", server_port);
+    state.gateway_status = format!("listening on {}", state.config.gateway_addr());
 
     // Auto-start interpreter if configured (listener is already up by now)
     if state.config.auto_connect {
@@ -125,15 +134,21 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
 
         // Check for messages from the gateway server.
         match gateway_rx.try_recv() {
-            Ok(GatewayMessage::Connected { addr, info }) => {
+            Ok(GatewayMessage::Connected { addr: _, info }) => {
+                // Show the gateway address (from editor.toml) rather than the
+                // interpreter's ephemeral source port, which changes each run.
+                let gateway = state.config.gateway_addr();
                 state.gateway_status = if info.vendor.is_empty() {
-                    format!("connected to {addr}")
+                    format!("interpreter connected — gateway {}", gateway)
                 } else {
-                    format!("connected to {addr} ({})", info.vendor)
+                    format!(
+                        "interpreter connected — gateway {} ({})",
+                        gateway, info.vendor
+                    )
                 };
             }
             Ok(GatewayMessage::Disconnected) => {
-                state.gateway_status = format!("listening on port {}", state.config.gateway_port);
+                state.gateway_status = format!("listening on {}", state.config.gateway_addr());
             }
             Ok(GatewayMessage::SessionOutput { text, output_type }) => {
                 // Only display output types that are actual results (1, 2, 5, 7, 8, 11, 14)

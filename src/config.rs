@@ -94,6 +94,32 @@ impl EditorConfig {
     pub fn default_path() -> PathBuf {
         PathBuf::from("editor.toml")
     }
+
+    /// Locate the config file: the working directory first, then next to the
+    /// executable (so `target/debug/stride` finds the repo's editor.toml), then
+    /// `~/.config/stride/editor.toml`. Falls back to `./editor.toml`, which
+    /// gives the defaults when it does not exist.
+    pub fn resolve_path() -> PathBuf {
+        let mut candidates = vec![PathBuf::from("editor.toml")];
+
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                for up in [dir.to_path_buf(), dir.join(".."), dir.join("../..")] {
+                    candidates.push(up.join("editor.toml"));
+                }
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut cfg = PathBuf::from(home);
+            cfg.push(".config/stride/editor.toml");
+            candidates.push(cfg);
+        }
+
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| PathBuf::from("editor.toml"))
+    }
 }
 
 #[cfg(test)]
