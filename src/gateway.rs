@@ -162,6 +162,7 @@ impl GatewayServer {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_default();
+                    eprintln!("[gateway] interpreter connected from {}", addr);
                     let tx = tx.clone();
                     let interpreter = interpreter.clone();
 
@@ -169,7 +170,9 @@ impl GatewayServer {
                         handle_interpreter(stream, tx, interpreter, addr);
                     });
                 }
-                Err(_) => {}
+                Err(e) => {
+                    eprintln!("[gateway] accept error: {}", e);
+                }
             }
         }
 
@@ -256,39 +259,64 @@ fn handle_interpreter(
 fn read_handshake_response(stream: &mut TcpStream, expected: &str) -> bool {
     let mut buf = [0u8; 1024];
     match stream.read(&mut buf) {
-        Ok(n) if n > 0 => {
+        Ok(0) => {
+            eprintln!("[gateway] recv: EOF");
+            false
+        }
+        Ok(n) => {
             let response = String::from_utf8_lossy(&buf[..n]);
+            eprintln!("[gateway] recv: {:?}", response);
             response.contains(expected)
         }
-        _ => false,
+        Err(e) => {
+            eprintln!("[gateway] recv error: {}", e);
+            false
+        }
     }
 }
 
 fn send_handshake_message(stream: &mut TcpStream, msg: &str) -> bool {
+    eprintln!("[gateway] send: {:?}", msg);
     stream.write_all(msg.as_bytes()).is_ok() && stream.flush().is_ok()
 }
 
 fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
+    eprintln!("[gateway] starting handshake...");
+
     // Step 1: Read "SupportedProtocols=2" from interpreter (raw, no framing).
     match read_handshake_response(stream, "SupportedProtocols=2") {
-        true => {}
-        false => return None,
+        true => eprintln!("[gateway] got SupportedProtocols=2"),
+        false => {
+            eprintln!("[gateway] FAILED to get SupportedProtocols=2");
+            return None;
+        }
     }
 
     // Step 2: Send "UsingProtocol=2" to interpreter.
     if !send_handshake_message(stream, "UsingProtocol=2") {
+        eprintln!("[gateway] FAILED to send UsingProtocol=2");
         return None;
     }
+    eprintln!("[gateway] sent UsingProtocol=2");
 
     // Step 3: Read interpreter's Identify message (JSON, framed).
     let identify_raw = match read_frame(stream) {
-        Ok(msg) => msg,
-        Err(_) => return None,
+        Ok(msg) => {
+            eprintln!("[gateway] got identify: {}", msg);
+            msg
+        }
+        Err(e) => {
+            eprintln!("[gateway] FAILED to read identify: {}", e);
+            return None;
+        }
     };
 
     let identify: serde_json::Value = match serde_json::from_str(&identify_raw) {
         Ok(v) => v,
-        Err(_) => return None,
+        Err(e) => {
+            eprintln!("[gateway] FAILED to parse identify JSON: {}", e);
+            return None;
+        }
     };
 
     let api_version = identify
@@ -296,28 +324,40 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         .and_then(|arr| arr.get(1))
         .and_then(|obj| obj["apiVersion"].as_i64())
         .unwrap_or(0);
+    eprintln!("[gateway] api_version: {}", api_version);
 
     // Step 4: Send our Identify message.
     let our_identify = serde_json::json!([
         "Identify",
         {
             "apiVersion": api_version,
-            "identity": 1  // Ride
+            "identity": 1
         }
     ]);
+    eprintln!("[gateway] sending our identify: {}", our_identify);
     if write_frame(stream, &our_identify.to_string()).is_err() {
+        eprintln!("[gateway] FAILED to send identify");
         return None;
     }
 
     // Step 5: Read ReplyIdentify.
     let reply_raw = match read_frame(stream) {
-        Ok(msg) => msg,
-        Err(_) => return None,
+        Ok(msg) => {
+            eprintln!("[gateway] got reply: {}", msg);
+            msg
+        }
+        Err(e) => {
+            eprintln!("[gateway] FAILED to read reply: {}", e);
+            return None;
+        }
     };
 
     let reply: serde_json::Value = match serde_json::from_str(&reply_raw) {
         Ok(v) => v,
-        Err(_) => return None,
+        Err(e) => {
+            eprintln!("[gateway] FAILED to parse reply JSON: {}", e);
+            return None;
+        }
     };
 
     // Parse interpreter info from ReplyIdentify.
@@ -341,6 +381,7 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         InterpreterInfo::default()
     };
 
+    eprintln!("[gateway] handshake complete, info: {:?}", info);
     Some(info)
 }
 
