@@ -1,6 +1,6 @@
 # stride
 
-A terminal-based APL editor with a full TUI, built in Rust. Write APL code with syntax highlighting, browse a searchable character palette, and evaluate expressions through a RIDE-compatible gateway to the [rust-apl](https://github.com/nousresearch/rust-apl) interpreter.
+A terminal-based APL editor with a full TUI, built in Rust. Write APL code with syntax highlighting, browse a searchable character palette, and evaluate expressions through a RIDE-compatible gateway to a [rust-apl](https://github.com/kapitaali/rust-apl) (or any RIDE-speaking) interpreter.
 
 ## Features
 
@@ -8,8 +8,8 @@ A terminal-based APL editor with a full TUI, built in Rust. Write APL code with 
 - **APL character palette** — 95 glyphs in 11 logical rows, TAB to cycle, arrows to select, Space to insert
 - **Syntax highlighting** — per-token coloring for primitives, operators, quad names, strings, comments, numbers, syscommands, and dfns
 - **Multi-line editor** — char-based cursor (APL glyphs count as one column), file open/save, dirty tracking
-- **RIDE-compatible gateway** — TCP client on port 4502, reusing `apl::ipc::protocol` types
-- **Pipe mode** — `apl-editor < demo.apl` evaluates a script without the TUI
+- **RIDE-compatible gateway server** — interpreters (rust-apl, Kap) connect to stride on port 4502 and evaluate over the RIDE protocol
+- **Three results layouts** — Ctrl+L cycles compact, expanded, and side-by-side panes
 - **ESC menu** — File / Edit / Help / QUIT overlay
 
 ## Building
@@ -19,29 +19,27 @@ cd ~/Apps/stride
 cargo build --release
 ```
 
-Requires the sibling `rust-apl` interpreter at `../rust-apl/` (the gateway client links against its IPC protocol types).
+Stride has no interpreter dependency at build time: it speaks the RIDE protocol over TCP and connects to whatever interpreter you point it at at runtime (the shipped `editor.toml` points at the sibling `../rust-apl/` checkout).
 
 ## Running
 
 ```bash
-# Interactive TUI (auto-starts the gateway if not running)
+# Interactive TUI (with auto_connect = true, the interpreter is
+# started for you and connects back to stride)
 cargo run
 
 # Open a file directly
 cargo run -- ~/Apps/rust-apl/examples/calc-demo.apl
 
-# Pipe mode (evaluate a script, print results)
-cargo run --quiet < demo.apl
-
 # Run with a different port (useful for multiple instances)
 cargo run -- --port 4503
 ```
 
-The editor will automatically start the gateway executable if it's not already running on the configured port. You can also start it manually:
+Stride listens on the configured port; interpreters connect to it. To start the interpreter yourself instead of letting `auto_connect` do it:
 
 ```bash
-# Start the interpreter server (in a separate terminal)
-cd ../rust-apl && cargo run -- --serve 4502
+# In a separate terminal (rust-apl as a RIDE client of stride)
+RIDE_INIT=CONNECT:127.0.0.1:4502 ../rust-apl/target/debug/apl --ride
 ```
 
 ## Controls
@@ -61,7 +59,7 @@ cd ../rust-apl && cargo run -- --serve 4502
 | **Delete** | Delete character under cursor |
 | **Home / End** | Jump to start / end of line |
 | **Ctrl + E** | Evaluate the current line |
-| **Ctrl + Enter** | Execute all lines of current buffer |
+| **Ctrl + R** | Execute all lines of the current buffer |
 | **Ctrl + S** | Save the current file |
 | **Ctrl + O** | Open file into new buffer |
 | **Ctrl + N** | New buffer (cycles after 9) |
@@ -70,16 +68,18 @@ cd ../rust-apl && cargo run -- --serve 4502
 | **ESC** | Open / close the menu |
 | **Ctrl + X** | Quit |
 
+**Ctrl + Enter** also executes the whole buffer, but only in terminals that support the enhanced keyboard protocol (kitty, foot, wezterm, ghostty). Plain terminals send Ctrl+Enter as an ordinary Enter, which is why Ctrl + R is the portable binding; stride requests the protocol on startup and releases it on exit.
+
 ## Configuration
 
-`editor.toml` in the working directory:
+`editor.toml` (looked up in the working directory, next to the executable, or in `~/.config/stride/`):
 
 ```toml
 gateway_host = "127.0.0.1"
 gateway_port = 4502
 gateway_executable = "../rust-apl/target/debug/apl"
-gateway_args = "--serve"
-gateway_env = []
+gateway_args = "--ride"
+gateway_env = ["RIDE_INIT=CONNECT:127.0.0.1:4502"]
 apl_version = "GNU APL 2.0 (Rust)"
 auto_connect = true
 max_results = 500
@@ -87,29 +87,27 @@ max_results = 500
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `gateway_host` | `127.0.0.1` | Host of the interpreter gateway |
+| `gateway_host` | `127.0.0.1` | Host the gateway listens on (and interpreters connect to) |
 | `gateway_port` | `4502` | Port of the interpreter gateway (RIDE default) |
-| `gateway_executable` | `../rust-apl/target/debug/apl` | Path to the interpreter executable |
-| `gateway_args` | `--serve` | Arguments passed to the gateway executable |
-| `gateway_env` | `[]` | Environment variables to set when spawning the gateway (e.g., `RIDE_INIT=CONNECT:localhost:4502` for Kap) |
+| `gateway_executable` | `../rust-apl/target/debug/apl` | Path to the interpreter executable to spawn |
+| `gateway_args` | `--serve` | Arguments for the interpreter; use `--ride` for RIDE client mode (as above) |
+| `gateway_env` | `[]` | Environment for the spawned interpreter; RIDE mode needs `RIDE_INIT=CONNECT:<host>:<port>` |
 | `apl_version` | `GNU APL 2.0 (Rust)` | Version string shown in the status bar |
-| `auto_connect` | `true` | Connect to the gateway automatically at startup |
+| `auto_connect` | `true` | Spawn the interpreter automatically at startup |
 | `max_results` | `500` | Maximum result-pane lines kept in memory |
 
-The editor will automatically start `gateway_executable` if it's not already running on the configured port. You can also start it manually with `cargo run -- --serve 4502`.
-
-Missing fields fall back to RIDE-compatible defaults. A missing file is not an error — you get the defaults.
+Missing fields fall back to the defaults above; a missing file is not an error — you get the defaults.
 
 ## Architecture
 
 ```
 src/
-├── main.rs        Entry point, TUI event loop, pipe mode
+├── main.rs        Entry point, TUI event loop, key handling
 ├── lib.rs         Crate root, module declarations
 ├── characters.rs  APL glyph database (95 glyphs, 11 rows)
 ├── config.rs      editor.toml parser with defaults
 ├── editor.rs      Multi-line buffer, char-based cursor, file I/O
-├── gateway.rs     TCP client to interpreter gateway (port 4502)
+├── gateway.rs     RIDE protocol server (handshake, framing, Execute round trips)
 ├── syntax.rs      Per-line tokenizer + token classification
 └── ui.rs          ratatui layout, palette, menus, status bar
 ```
@@ -118,8 +116,8 @@ src/
 
 1. User types or inserts a glyph → `Buffer` updates its line data + cursor
 2. `ui.rs` reads `EditorState` each frame and renders four panes
-3. On Ctrl+E, the current line is sent to the gateway (or evaluated locally if disconnected)
-4. Results are pushed into `EditorState.results` and displayed in the result pane
+3. On Ctrl+E (current line) or Ctrl+R (whole buffer), lines are sent to the connected interpreter via the gateway
+4. Results arrive as `AppendSessionOutput` messages and are pushed into `EditorState.results` for the result pane
 
 ### Palette rows
 
@@ -137,28 +135,22 @@ src/
 | 10 | Punctuation / Greek | « » ⋄ ⍝ → ⍵ ⍺ ∇ ⍓ |
 | 11 | Misc | ¯ ⍬ ∆ ⍙ |
 
-## Integration with rust-apl
+## RIDE protocol
 
-The editor connects to the rust-apl interpreter as a gateway client on port 4502 using the **RIDE binary-framed protocol** (same protocol as the [RIDE editor](https://github.com/Dyalog/ride)):
+Interpreters connect to stride's gateway server on port 4502 and speak the **RIDE binary-framed protocol** (same protocol as the [RIDE editor](https://github.com/Dyalog/ride)):
 
 ```
 Framing: [4 bytes BE length][4 bytes "RIDE"][JSON payload]
 Commands: ["Execute", {"text": "2+2"}]
-Responses: ["AppendSessionOutput", {"result": "4"}]
+Responses: ["AppendSessionOutput", {"result": "4", "type": 2}]
 ```
 
-Start the interpreter server first:
+Handshake on connect:
+1. Interpreter sends `SupportedProtocols=2` → stride answers `UsingProtocol=2` (mirroring the client's framing, so strictly framed interpreters like Kap and plain-text clients like rust-apl both work)
+2. Interpreter sends `["Identify", ...]` → stride replies `["ReplyIdentify", ...]`
+3. Interpreter sends `["Connect", ...]` → stride replies `["ReplyConnect", ...]`
 
-```bash
-cd ../rust-apl && cargo run -- --serve 4502
-```
-
-The editor auto-connects on startup and performs the handshake:
-1. `SupportedProtocols=2` → `UsingProtocol=2`
-2. `["Identify", ...]` → `["ReplyIdentify", ...]`
-3. `["Connect", ...]` → `["ReplyConnect", ...]`
-
-Ctrl+E sends the current line to the server for evaluation. When the gateway is disconnected, Ctrl+E falls back to evaluating locally with `Environment::eval_line()`.
+System commands (`)HELP`, `]BOXING`, …) typed in the editor run in the interpreter and come back as session output type 4. If no interpreter is connected, evaluations are reported as such in the results pane until one connects.
 
 ## Testing
 
@@ -166,7 +158,7 @@ Ctrl+E sends the current line to the server for evaluation. When the gateway is 
 cargo test
 ```
 
-34 unit tests cover the palette database, config parsing, buffer editing, syntax highlighting, gateway response parsing, and UI widget construction.
+35 unit tests cover the palette database, config parsing, buffer editing, syntax highlighting, gateway framing/parsing, results-pane rendering, and UI widget construction.
 
 ## License
 

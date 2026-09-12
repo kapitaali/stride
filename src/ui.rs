@@ -81,7 +81,7 @@ impl EditorState {
             dialog: None,
             gateway_status: "disconnected".to_string(),
             results: Vec::new(),
-            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+L: results mode  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+Enter/Ctrl+R: run all  ESC: menu  Ctrl-E: eval  Ctrl-X: quit".to_string(),
+            status: "TAB: next category  ←→: move cursor  Ctrl+←→: select glyph  Ctrl+Space: insert  Ctrl+P: palette  Ctrl+L: results mode  Ctrl+N: new buffer  Ctrl+O: open  Ctrl+R: run all  ESC: menu  Ctrl-E: eval  Ctrl-X: quit".to_string(),
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
             results_mode: 1,
@@ -534,9 +534,10 @@ Ctrl+O          Open file into new buffer
 EVALUATION
 ──────────
 Ctrl+E          Evaluate current line
-Ctrl+Enter      Execute all lines of current buffer
-                (needs a terminal with the enhanced keyboard
-                protocol; Ctrl+R does the same everywhere)
+Ctrl+R          Execute all lines of current buffer
+Ctrl+Enter      Same, on terminals that support the enhanced
+                keyboard protocol (kitty, foot, wezterm, ghostty);
+                plain terminals send it as a normal Enter
 
 PALETTE
 ───────
