@@ -123,6 +123,17 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+    // Ask the terminal for the enhanced keyboard protocol (kitty progressive
+    // enhancement). This is what makes Ctrl+Enter distinguishable from plain
+    // Enter: without it every terminal sends the same byte for both. Markers
+    // that do not support the protocol ignore the sequence, and Ctrl+R
+    // remains available as a binding that works everywhere.
+    let _ = crossterm::execute!(
+        stdout,
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+        )
+    );
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -201,6 +212,11 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     };
 
     crossterm::terminal::disable_raw_mode()?;
+    // Restore the keyboard mode the terminal had before the push at startup.
+    let _ = crossterm::execute!(
+        terminal.backend_mut(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
     crossterm::execute!(
         terminal.backend_mut(),
         crossterm::terminal::LeaveAlternateScreen
@@ -247,15 +263,11 @@ fn handle_key(
                 state.active_buffer = state.active_buffer.min(state.buffers.len() - 1);
             }
         }
-        (KeyCode::Enter, KeyModifiers::CONTROL) => {
-            // Execute all lines of current buffer
-            let lines: Vec<String> = state.buffer().lines().iter().cloned().collect();
-            for line in &lines {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    eval_line(state, interpreter, trimmed, 0);
-                }
-            }
+        (KeyCode::Enter, KeyModifiers::CONTROL) | (KeyCode::Char('r'), KeyModifiers::CONTROL) => {
+            // Execute all lines of current buffer. Ctrl+Enter needs a terminal
+            // that speaks the enhanced keyboard protocol; Ctrl+R works in any
+            // terminal (it is a plain control byte, 0x12).
+            run_all_lines(state, interpreter);
         }
         (KeyCode::Char(c), KeyModifiers::CONTROL) if c >= '1' && c <= '9' => {
             let idx = (c as u8 - b'1') as usize;
@@ -383,6 +395,25 @@ fn menu_action(
     }
     let _ = interpreter;
     false
+}
+
+/// Execute every non-empty line of the current buffer in order.
+fn run_all_lines(
+    state: &mut EditorState,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
+) {
+    let lines: Vec<String> = state.buffer().lines().iter().cloned().collect();
+    let mut ran = 0usize;
+    for line in &lines {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            eval_line(state, interpreter, trimmed, 0);
+            ran += 1;
+        }
+    }
+    if ran == 0 {
+        state.status = "run all: buffer is empty".to_string();
+    }
 }
 
 fn eval_current_line(
