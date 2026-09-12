@@ -11,7 +11,7 @@ use ratatui::Terminal;
 
 use stride::config::EditorConfig;
 use stride::editor::Buffer;
-use stride::gateway::{GatewayCommand, GatewayMessage, GatewayServer};
+use stride::gateway::{ExecuteResult, GatewayCommand, GatewayMessage, GatewayServer};
 use stride::ui::{self, Dialog, EditorState};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -88,14 +88,38 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
 
         // Check for messages from the gateway server.
         match gateway_rx.try_recv() {
-            Ok(GatewayMessage::Connected { addr }) => {
-                state.gateway_status = format!("connected to {addr}");
+            Ok(GatewayMessage::Connected { addr, info }) => {
+                state.gateway_status = format!("connected to {addr} ({})", info.vendor);
             }
             Ok(GatewayMessage::Disconnected) => {
                 state.gateway_status = format!("listening on port {}", state.config.gateway_port);
             }
-            Ok(GatewayMessage::Output { result, .. }) => {
-                state.push_result(result);
+            Ok(GatewayMessage::SessionOutput { text, output_type }) => {
+                // Only display output types that are actual results (1, 2, 5, 7, 8, 11, 14)
+                // Skip reserved types (0, 6, 10, 13) and status (9)
+                match output_type {
+                    0 | 6 | 10 | 13 => {} // reserved
+                    9 => {} // status window info
+                    _ => state.push_result(text),
+                }
+            }
+            Ok(GatewayMessage::SetPromptType { prompt_type }) => {
+                state.status = format!("prompt type: {}", prompt_type);
+            }
+            Ok(GatewayMessage::HadError) => {
+                state.status = "error occurred".to_string();
+            }
+            Ok(GatewayMessage::GetLogReply { lines }) => {
+                for line in lines {
+                    state.push_result(line.text);
+                }
+            }
+            Ok(GatewayMessage::InterpreterStatus { io, si, .. }) => {
+                state.io_label = format!("⎕IO={}", io);
+                state.status = format!("SI={}", si);
+            }
+            Ok(GatewayMessage::Configuration { name, value }) => {
+                state.status = format!("config {} = {}", name, value);
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => break Ok(()),
@@ -138,7 +162,7 @@ fn handle_key(
     match (code, mods) {
         (KeyCode::Char('x'), KeyModifiers::CONTROL) => return true,
         (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-            eval_current_line(state, interpreter);
+            eval_current_line(state, interpreter, 0); // execute (not trace)
         }
         (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
@@ -173,7 +197,7 @@ fn handle_key(
             for line in &lines {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
-                    eval_line(state, interpreter, trimmed);
+                    eval_line(state, interpreter, trimmed, 0);
                 }
             }
         }
@@ -301,16 +325,16 @@ fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Ga
     false
 }
 
-fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>) {
+fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, trace: u8) {
     let line = state.buffer_mut().current_line().trim().to_string();
     if line.is_empty() {
         return;
     }
-    eval_line(state, interpreter, &line);
+    eval_line(state, interpreter, &line, trace);
 }
 
-fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str) {
-    let (tx, rx) = channel::<String>();
+fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str, trace: u8) {
+    let (tx, rx) = channel::<ExecuteResult>();
     
     // Try to send to connected interpreter
     let sent = {
@@ -318,6 +342,7 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
         if let Some(ref sender) = *ints {
             sender.send(GatewayCommand::Execute {
                 text: line.to_string(),
+                trace,
                 response_tx: tx,
             }).is_ok()
         } else {
@@ -328,27 +353,15 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
     if sent {
         // Wait for response (with timeout)
         match rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(result) => {
-                // Parse JSON response: ["AppendSessionOutput", {"result":"...", "type":0}]
-                let display = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&result) {
-                    if let Some(arr) = val.as_array() {
-                        arr.get(1)
-                            .and_then(|o| o["result"].as_str())
-                            .unwrap_or(&result)
-                            .to_string()
-                    } else {
-                        result
-                    }
-                } else {
-                    result
-                };
-                if display.is_empty() {
-                    state.status = "no result (assignment)".to_string();
-                } else {
-                    state.push_result(format!("⎕ {display}"));
+            Ok(result) => match result {
+                ExecuteResult::Ok => {
                     state.status = "evaluated via gateway".to_string();
                 }
-            }
+                ExecuteResult::Error(e) => {
+                    state.push_result(format!("ERROR: {e}"));
+                    state.status = "eval error".to_string();
+                }
+            },
             Err(_) => {
                 state.push_result("ERROR: gateway timeout".to_string());
                 state.status = "gateway timeout".to_string();

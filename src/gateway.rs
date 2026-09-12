@@ -1,9 +1,16 @@
-//! Gateway: TCP server that listens for interpreters to connect.
+//! Gateway: RIDE protocol server.
 //!
-//! Speaks the RIDE binary-framed protocol (same as the RIDE editor, src/cn.js):
-//!   Framing: [4 bytes BE total length][4 bytes "RIDE"][JSON payload]
-//!   Commands: JSON arrays like ["Execute", {"text": "2+2"}]
-//!   Responses: JSON arrays like ["AppendSessionOutput", {"result": "4"}]
+//! Conforms to the RIDE protocol specification from ride/docs/protocol.md.
+//!
+//! Wire format:
+//!   [4 bytes BE total length][4 bytes "RIDE"][UTF-8 JSON payload]
+//!   Total length = 8 + len(payload in bytes)
+//!
+//! Handshake (first two messages, NOT JSON-encoded):
+//!   1. Both sides send "SupportedProtocols=2\n"
+//!   2. Both sides respond "UsingProtocol=2\n"
+//!
+//! After handshake, all messages are JSON 2-element arrays: ["Name", {...}]
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -14,35 +21,102 @@ use std::thread;
 /// Messages from the gateway server to the UI.
 #[derive(Debug, Clone)]
 pub enum GatewayMessage {
-    /// An interpreter has connected.
-    Connected { addr: String },
-    /// The interpreter has disconnected.
+    Connected { addr: String, info: InterpreterInfo },
     Disconnected,
-    /// Output from an expression evaluation.
-    Output { result: String, msg_type: u8 },
+    /// Session output from interpreter.
+    SessionOutput { text: String, output_type: u8 },
+    /// Set prompt type from interpreter.
+    SetPromptType { prompt_type: u8 },
+    /// Had error from interpreter.
+    HadError,
+    /// Reply to GetLog request.
+    GetLogReply { lines: Vec<LogLine> },
+    /// Interpreter status update.
+    InterpreterStatus {
+        io: i64,
+        dq: i64,
+        wa: i64,
+        si: i64,
+        trap: i64,
+        ml: i64,
+        num_threads: i64,
+        tid: i64,
+    },
+    /// Configuration reply.
+    Configuration { name: String, value: String },
+}
+
+/// Log line with type and group.
+#[derive(Debug, Clone)]
+pub struct LogLine {
+    pub text: String,
+    pub output_type: u8,
+    pub group: u8,
+}
+
+/// Interpreter information from ReplyIdentify.
+#[derive(Debug, Clone)]
+pub struct InterpreterInfo {
+    pub vendor: String,
+    pub language: String,
+    pub version: String,
+    pub platform: String,
+    pub project: String,
+    pub process: String,
+    pub user: String,
+    pub pid: i64,
+    pub arch: String,
+}
+
+impl Default for InterpreterInfo {
+    fn default() -> Self {
+        Self {
+            vendor: String::new(),
+            language: "APL".to_string(),
+            version: String::new(),
+            platform: String::new(),
+            project: String::new(),
+            process: String::new(),
+            user: String::new(),
+            pid: 0,
+            arch: String::new(),
+        }
+    }
 }
 
 /// Commands from the UI to the gateway server.
 #[derive(Debug)]
 pub enum GatewayCommand {
-    /// Evaluate an expression, return the result via the channel.
     Execute {
         text: String,
-        response_tx: Sender<String>,
+        trace: u8,
+        response_tx: Sender<ExecuteResult>,
     },
+    GetLog {
+        max_lines: i64,
+        response_tx: Sender<Vec<LogLine>>,
+    },
+    SetPW {
+        pw: u16,
+    },
+    Exit,
+}
+
+/// Result of an Execute command.
+#[derive(Debug)]
+pub enum ExecuteResult {
+    Ok,
+    Error(String),
 }
 
 /// Gateway server that listens for interpreters to connect.
 pub struct GatewayServer {
     pub port: u16,
-    /// Send messages to the UI.
     tx: Sender<GatewayMessage>,
-    /// Current interpreter connection (if any).
     interpreter: Arc<Mutex<Option<Sender<GatewayCommand>>>>,
 }
 
 impl GatewayServer {
-    /// Create a new gateway server on the given port.
     pub fn new(port: u16) -> (Self, Receiver<GatewayMessage>, Sender<GatewayCommand>) {
         let (tx, ui_rx) = channel::<GatewayMessage>();
         let (ui_tx, _rx) = channel::<GatewayCommand>();
@@ -55,7 +129,6 @@ impl GatewayServer {
         )
     }
 
-    /// Get a reference to the interpreter sender (for the UI to send commands).
     pub fn interpreter(&self) -> Arc<Mutex<Option<Sender<GatewayCommand>>>> {
         self.interpreter.clone()
     }
@@ -65,9 +138,9 @@ impl GatewayServer {
         let listener = match TcpListener::bind(format!("127.0.0.1:{}", self.port)) {
             Ok(l) => l,
             Err(e) => {
-                let _ = self.tx.send(GatewayMessage::Output {
-                    result: format!("gateway: cannot bind port {}: {}", self.port, e),
-                    msg_type: 0,
+                let _ = self.tx.send(GatewayMessage::SessionOutput {
+                    text: format!("gateway: cannot bind port {}: {}", self.port, e),
+                    output_type: 3, // stderr
                 });
                 return Err(e);
             }
@@ -76,7 +149,6 @@ impl GatewayServer {
         let tx = self.tx.clone();
         let interpreter = self.interpreter.clone();
 
-        // Accept connections.
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
@@ -87,7 +159,6 @@ impl GatewayServer {
                     let tx = tx.clone();
                     let interpreter = interpreter.clone();
 
-                    // Handle this connection in a new thread.
                     thread::spawn(move || {
                         handle_interpreter(stream, tx, interpreter, addr);
                     });
@@ -107,10 +178,11 @@ fn handle_interpreter(
     interpreter: Arc<Mutex<Option<Sender<GatewayCommand>>>>,
     addr: String,
 ) {
-    // Perform the handshake.
-    if !perform_handshake(&mut stream) {
-        return;
-    }
+    // Perform the RIDE handshake.
+    let info = match perform_handshake(&mut stream) {
+        Some(info) => info,
+        None => return,
+    };
 
     // Create a channel for sending commands to this interpreter.
     let (cmd_tx, cmd_rx) = channel::<GatewayCommand>();
@@ -122,18 +194,48 @@ fn handle_interpreter(
     }
 
     // Notify UI that interpreter is connected.
-    let _ = tx.send(GatewayMessage::Connected { addr: addr.clone() });
+    let _ = tx.send(GatewayMessage::Connected {
+        addr: addr.clone(),
+        info,
+    });
 
     // Process commands from the UI.
     for cmd in cmd_rx {
         match cmd {
-            GatewayCommand::Execute { text, response_tx } => {
-                let result = execute_expression(&mut stream, &text);
-                let _ = response_tx.send(result.clone());
-                let _ = tx.send(GatewayMessage::Output {
-                    result,
-                    msg_type: 0,
-                });
+            GatewayCommand::Execute { text, trace, response_tx } => {
+                match send_execute(&mut stream, &text, trace) {
+                    Ok(()) => {
+                        let _ = response_tx.send(ExecuteResult::Ok);
+                    }
+                    Err(e) => {
+                        let _ = response_tx.send(ExecuteResult::Error(e.clone()));
+                        let _ = tx.send(GatewayMessage::SessionOutput {
+                            text: e,
+                            output_type: 3,
+                        });
+                    }
+                }
+            }
+            GatewayCommand::GetLog { max_lines, response_tx } => {
+                match send_get_log(&mut stream, max_lines) {
+                    Ok(lines) => {
+                        let _ = tx.send(GatewayMessage::GetLogReply { lines: lines.clone() });
+                        let _ = response_tx.send(lines);
+                    }
+                    Err(e) => {
+                        let _ = tx.send(GatewayMessage::SessionOutput {
+                            text: e,
+                            output_type: 3,
+                        });
+                    }
+                }
+            }
+            GatewayCommand::SetPW { pw } => {
+                let _ = send_set_pw(&mut stream, pw);
+            }
+            GatewayCommand::Exit => {
+                let _ = send_exit(&mut stream);
+                break;
             }
         }
     }
@@ -148,82 +250,190 @@ fn handle_interpreter(
     let _ = tx.send(GatewayMessage::Disconnected);
 }
 
-/// Perform the RIDE handshake with the interpreter.
-fn perform_handshake(stream: &mut TcpStream) -> bool {
-    // Step 1: Read SupportedProtocols=2 from interpreter
-    let mut buf = [0u8; 4096];
-    let n = match stream.read(&mut buf) {
-        Ok(0) => return false,
-        Ok(n) => n,
-        Err(_) => return false,
+/// Perform the RIDE handshake.
+///
+/// Protocol:
+/// 1. Both sides send "SupportedProtocols=2\n" (raw, no framing)
+/// 2. Both sides respond "UsingProtocol=2\n" (raw, no framing)
+/// 3. Both sides send ["Identify", {"apiVersion": N, "identity": I}] (JSON)
+/// 4. If apiVersion >= 1, interpreter responds with ["ReplyIdentify", {...}]
+fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
+    // Step 1: Read "SupportedProtocols=2\n" from interpreter.
+    let mut buf = [0u8; 1024];
+    let n = match read_line(stream) {
+        Ok(line) => {
+            if !line.contains("SupportedProtocols=2") {
+                return None;
+            }
+            0
+        }
+        Err(_) => return None,
     };
+    let _ = n;
 
-    let payload = String::from_utf8_lossy(&buf[..n]);
-    if !payload.contains("SupportedProtocols=2") {
-        return false;
+    // Step 2: Send "UsingProtocol=2\n" to interpreter.
+    if stream.write_all(b"UsingProtocol=2\n").is_err() {
+        return None;
+    }
+    if stream.flush().is_err() {
+        return None;
     }
 
-    // Step 2: Send UsingProtocol=2
-    let response = "UsingProtocol=2";
-    let frame = frame(response);
-    if stream.write_all(&frame).is_err() {
-        return false;
-    }
-
-    // Step 3: Read ["Identify", {...}] from interpreter
-    let identify = match read_frame(stream) {
+    // Step 3: Read interpreter's Identify message (JSON).
+    let identify_raw = match read_frame(stream) {
         Ok(msg) => msg,
-        Err(_) => return false,
+        Err(_) => return None,
     };
 
-    if !identify.contains("Identify") {
-        return false;
+    let identify: serde_json::Value = match serde_json::from_str(&identify_raw) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+
+    let api_version = identify
+        .as_array()
+        .and_then(|arr| arr.get(1))
+        .and_then(|obj| obj["apiVersion"].as_i64())
+        .unwrap_or(0);
+
+    // Step 4: Send our Identify message.
+    let our_identify = serde_json::json!([
+        "Identify",
+        {
+            "apiVersion": api_version,
+            "identity": 1  // Ride
+        }
+    ]);
+    if write_frame(stream, &our_identify.to_string()).is_err() {
+        return None;
     }
 
-    // Step 4: Send ["ReplyIdentify", {...}]
-    let reply = serde_json::json!(["ReplyIdentify", {
-        "identity": 1,
-        "protocolVersion": 2,
-        "version": "stride 0.1.0"
-    }]);
-    if write_frame(stream, &reply.to_string()).is_err() {
-        return false;
-    }
-
-    // Step 5: Read ["Connect", {...}] from interpreter
-    let connect = match read_frame(stream) {
+    // Step 5: Read ReplyIdentify (apiVersion >= 1) or process Identify response.
+    let reply_raw = match read_frame(stream) {
         Ok(msg) => msg,
-        Err(_) => return false,
+        Err(_) => return None,
     };
 
-    if !connect.contains("Connect") {
-        return false;
-    }
+    let reply: serde_json::Value = match serde_json::from_str(&reply_raw) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
 
-    // Step 6: Send ["ReplyConnect", {...}]
-    let reply = serde_json::json!(["ReplyConnect", {
-        "remoteId": 2,
-        "protocolVersion": 2
-    }]);
-    if write_frame(stream, &reply.to_string()).is_err() {
-        return false;
-    }
+    // Parse interpreter info from ReplyIdentify.
+    let info = if let Some(arr) = reply.as_array() {
+        if let Some(obj) = arr.get(1) {
+            InterpreterInfo {
+                vendor: obj["Vendor"].as_str().unwrap_or("").to_string(),
+                language: obj["Language"].as_str().unwrap_or("APL").to_string(),
+                version: obj["version"].as_str().unwrap_or("").to_string(),
+                platform: obj["platform"].as_str().unwrap_or("").to_string(),
+                project: obj["Project"].as_str().unwrap_or("").to_string(),
+                process: obj["Process"].as_str().unwrap_or("").to_string(),
+                user: obj["User"].as_str().unwrap_or("").to_string(),
+                pid: obj["pid"].as_i64().unwrap_or(0),
+                arch: obj["arch"].as_str().unwrap_or("").to_string(),
+            }
+        } else {
+            InterpreterInfo::default()
+        }
+    } else {
+        InterpreterInfo::default()
+    };
 
-    true
+    Some(info)
 }
 
-/// Execute an expression on the interpreter and return the result.
-fn execute_expression(stream: &mut TcpStream, text: &str) -> String {
-    let cmd = serde_json::json!(["Execute", {"trace":0, "text": text}]);
-    if write_frame(stream, &cmd.to_string()).is_err() {
-        return "ERROR: failed to send expression".to_string();
-    }
+/// Send Execute command to interpreter.
+fn send_execute(stream: &mut TcpStream, text: &str, trace: u8) -> Result<(), String> {
+    let cmd = serde_json::json!([
+        "Execute",
+        {
+            "text": text,
+            "trace": trace
+        }
+    ]);
+    write_frame(stream, &cmd.to_string())
+        .map_err(|e| format!("failed to send Execute: {}", e))
+}
 
-    // Read response
-    match read_frame(stream) {
-        Ok(response) => response,
-        Err(e) => format!("ERROR: {}", e),
+/// Send GetLog command to interpreter.
+fn send_get_log(stream: &mut TcpStream, max_lines: i64) -> Result<Vec<LogLine>, String> {
+    let cmd = serde_json::json!([
+        "GetLog",
+        {
+            "format": "json",
+            "maxLines": max_lines
+        }
+    ]);
+    write_frame(stream, &cmd.to_string())
+        .map_err(|e| format!("failed to send GetLog: {}", e))?;
+
+    // Read ReplyGetLog response.
+    let response = read_frame(stream).map_err(|e| format!("failed to read ReplyGetLog: {}", e))?;
+    let value: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|e| format!("invalid JSON in ReplyGetLog: {}", e))?;
+
+    parse_get_log_response(&value)
+}
+
+/// Parse ReplyGetLog response into LogLines.
+fn parse_get_log_response(value: &serde_json::Value) -> Result<Vec<LogLine>, String> {
+    let arr = value.as_array().ok_or("ReplyGetLog is not an array")?;
+    let result = arr.get(1).and_then(|o| o["result"].as_array());
+
+    let mut lines = Vec::new();
+    if let Some(items) = result {
+        for item in items {
+            if let Some(text) = item.as_str() {
+                // Text format.
+                lines.push(LogLine {
+                    text: text.to_string(),
+                    output_type: 1,
+                    group: 1,
+                });
+            } else if let Some(obj) = item.as_object() {
+                // JSON format.
+                lines.push(LogLine {
+                    text: obj["text"].as_str().unwrap_or("").to_string(),
+                    output_type: obj["type"].as_u64().unwrap_or(1) as u8,
+                    group: obj["group"].as_u64().unwrap_or(1) as u8,
+                });
+            }
+        }
     }
+    Ok(lines)
+}
+
+/// Send SetPW command to interpreter.
+fn send_set_pw(stream: &mut TcpStream, pw: u16) -> Result<(), String> {
+    let cmd = serde_json::json!(["SetPW", {"pw": pw}]);
+    write_frame(stream, &cmd.to_string())
+        .map_err(|e| format!("failed to send SetPW: {}", e))
+}
+
+/// Send Exit command to interpreter.
+fn send_exit(stream: &mut TcpStream) -> Result<(), String> {
+    let cmd = serde_json::json!(["Exit", {"code": 0}]);
+    write_frame(stream, &cmd.to_string())
+        .map_err(|e| format!("failed to send Exit: {}", e))
+}
+
+/// Read a line from the stream (for handshake).
+fn read_line(stream: &mut TcpStream) -> Result<String, String> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read_exact(&mut byte) {
+            Ok(()) => {
+                if byte[0] == b'\n' {
+                    break;
+                }
+                buf.push(byte[0]);
+            }
+            Err(e) => return Err(format!("read error: {}", e)),
+        }
+    }
+    String::from_utf8(buf).map_err(|_| "invalid UTF-8".to_string())
 }
 
 /// Read a framed message from the stream.
@@ -236,7 +446,7 @@ fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
         return Err("frame too short".to_string());
     }
 
-    // Verify "RIDE" magic
+    // Verify "RIDE" magic.
     if &header[4..8] != b"RIDE" {
         return Err("invalid frame magic".to_string());
     }
@@ -250,8 +460,8 @@ fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
 
 /// Write a framed message to the stream.
 fn write_frame(stream: &mut TcpStream, payload: &str) -> Result<(), String> {
-    let frame = frame(payload);
-    stream.write_all(&frame).map_err(|e| format!("write error: {}", e))?;
+    let f = frame(payload);
+    stream.write_all(&f).map_err(|e| format!("write error: {}", e))?;
     stream.flush().map_err(|e| format!("flush error: {}", e))?;
     Ok(())
 }
@@ -276,5 +486,41 @@ mod tests {
         assert_eq!(f.len(), 12); // 4 bytes len + 4 bytes "RIDE" + 4 bytes "test"
         assert_eq!(&f[4..8], b"RIDE");
         assert_eq!(&f[8..], b"test");
+    }
+
+    #[test]
+    fn test_frame_json() {
+        let payload = r#"["Execute",{"text":"2+2","trace":0}]"#;
+        let f = frame(payload);
+        assert_eq!(f.len(), 8 + payload.len());
+        assert_eq!(&f[4..8], b"RIDE");
+    }
+
+    #[test]
+    fn test_parse_get_log_text() {
+        let value: serde_json::Value = serde_json::json!([
+            "ReplyGetLog",
+            { "result": ["line 1", "line 2"] }
+        ]);
+        let lines = parse_get_log_response(&value).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "line 1");
+    }
+
+    #[test]
+    fn test_parse_get_log_json() {
+        let value: serde_json::Value = serde_json::json!([
+            "ReplyGetLog",
+            {
+                "result": [
+                    { "group": 1, "type": 1, "text": "line 1" },
+                    { "group": 1, "type": 5, "text": "error" }
+                ]
+            }
+        ]);
+        let lines = parse_get_log_response(&value).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].output_type, 1);
+        assert_eq!(lines[1].output_type, 5);
     }
 }
