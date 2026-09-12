@@ -114,6 +114,7 @@ pub static PALETTE_ROWS: &[PaletteRow] = &[
         ("∧", "and / lcm"),
         ("⍲", "nand"),
         ("⍱", "nor"),
+        ("&", "and / spawn"),
     ),
     row!(
         CharCategory::Structural,
@@ -167,6 +168,10 @@ pub static PALETTE_ROWS: &[PaletteRow] = &[
         ("⍤", "atop / bind"),
         ("⍥", "over"),
         ("⍢", "under (alt)"),
+        (".", "compose dot"),
+        ("@", "at / each-element"),
+        ("⌺", "stencil"),
+        ("⌶", "I-beam"),
         ("⍫", "lock"),
         ("∵", "because"),
         ("∥", "parallel"),
@@ -176,6 +181,7 @@ pub static PALETTE_ROWS: &[PaletteRow] = &[
         ("⍎", "execute"),
         ("⍕", "format"),
         ("⍰", "null / placeholder"),
+        ("⍠", "quad variant"),
     ),
     row!(
         CharCategory::Punctuation,
@@ -188,6 +194,7 @@ pub static PALETTE_ROWS: &[PaletteRow] = &[
         ("⍺", "alpha / left arg"),
         ("∇", "dfn editor"),
         ("⍓", "quad input"),
+        ("⎕", "quad"),
     ),
     row!(
         CharCategory::Misc,
