@@ -141,9 +141,14 @@ impl GatewayServer {
     }
 
     pub fn run(self) -> std::io::Result<()> {
-        let listener = match TcpListener::bind(format!("127.0.0.1:{}", self.port)) {
-            Ok(l) => l,
+        eprintln!("[gateway] attempting to bind port {}...", self.port);
+        let listener = match TcpListener::bind(format!("0.0.0.0:{}", self.port)) {
+            Ok(l) => {
+                eprintln!("[gateway] successfully bound to port {}", self.port);
+                l
+            }
             Err(e) => {
+                eprintln!("[gateway] FAILED to bind port {}: {}", self.port, e);
                 let _ = self.tx.send(GatewayMessage::SessionOutput {
                     text: format!("gateway: cannot bind port {}: {}", self.port, e),
                     output_type: 3,

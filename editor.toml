@@ -1,7 +1,7 @@
 # stride configuration
 # RIDE-compatible gateway defaults (localhost:4502)
 
-gateway_host = "127.0.0.1"
+gateway_host = "0.0.0.0"
 gateway_port = 4502
 #gateway_executable = "../rust-apl/target/debug/apl"
 gateway_executable = "/home/theb/Apps/array/kap-jvm-text/bin/kap-jvm-text"

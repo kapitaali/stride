@@ -17,8 +17,11 @@ use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
 fn main() {
+    eprintln!("[main] starting stride...");
     let args: Vec<String> = env::args().collect();
+    eprintln!("[main] args: {:?}", args);
     let mut config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
+    eprintln!("[main] config loaded: port={}, executable={}", config.gateway_port, config.gateway_executable);
 
     // Parse --port argument
     if let Some(pos) = args.iter().position(|a| a == "--port") {
@@ -59,7 +62,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
 
     // Check if port is available before starting TUI
     let port = state.config.gateway_port;
-    if let Err(e) = std::net::TcpListener::bind(format!("127.0.0.1:{port}")) {
+    if let Err(e) = std::net::TcpListener::bind(format!("0.0.0.0:{port}")) {
         eprintln!("Cannot start stride: port {port} is already in use ({e}).");
         eprintln!("Another stride instance may be running. Use )OFF or Ctrl+X to quit it first.");
         eprintln!("Or specify a different port with --port <number>.");
@@ -75,7 +78,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     });
     state.gateway_status = format!("listening on port {}", server_port);
 
-    // Auto-start interpreter if configured and not already running
+    // Auto-start interpreter if configured and not running
     if state.config.auto_connect {
         try_spawn_interpreter(&state.config);
     }
@@ -86,6 +89,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    eprintln!("[main] entering TUI event loop...");
     let res: std::io::Result<()> = loop {
         terminal
             .draw(|f| ui::draw(f, &state))
