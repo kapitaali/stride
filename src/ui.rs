@@ -48,8 +48,8 @@ pub struct EditorState {
 pub enum Dialog {
     OpenFile {
         path: String,
-        cursor: usize,        // selected file index
-        files: Vec<String>,   // files in current directory
+        cursor: usize,      // selected file index
+        files: Vec<String>, // files in current directory
     },
     SaveAs {
         path: String,
@@ -147,7 +147,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     use ratatui::layout::Layout;
 
     let palette_rows = if state.palette_expanded { 9 } else { 5 };
-    
+
     match state.results_mode {
         1 => {
             // Mode 1: Compact - palette, editor, results (6 rows), status bar
@@ -429,9 +429,8 @@ pub fn render_status_bar(state: &EditorState) -> Paragraph<'static> {
     }
     // Right-aligned status + gateway info
     let right = format!("{}  |  {}", state.gateway_status, state.status);
-    let pad = 60usize.saturating_sub(
-        spans.iter().map(|s| s.content.len()).sum::<usize>() + right.len(),
-    );
+    let pad =
+        60usize.saturating_sub(spans.iter().map(|s| s.content.len()).sum::<usize>() + right.len());
     spans.push(Span::raw(" ".repeat(pad)));
     spans.push(Span::raw(right));
 

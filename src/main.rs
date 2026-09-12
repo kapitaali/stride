@@ -9,17 +9,21 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::mpsc::{channel, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use stride::config::EditorConfig;
 use stride::editor::Buffer;
 use stride::gateway::{ExecuteResult, GatewayCommand, GatewayMessage, GatewayServer};
 use stride::ui::{self, Dialog, EditorState};
-use std::sync::mpsc::{channel, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
-use std::fs::OpenOptions;
-use std::io::Write;
 
 fn debug_log(msg: &str) {
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/stride_debug.log") {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/stride_debug.log")
+    {
         let _ = writeln!(f, "{}", msg);
     }
 }
@@ -29,7 +33,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     debug_log(&format!("[main] args: {:?}", args));
     let mut config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
-    debug_log(&format!("[main] config loaded: port={}, executable={}", config.gateway_port, config.gateway_executable));
+    debug_log(&format!(
+        "[main] config loaded: port={}, executable={}",
+        config.gateway_port, config.gateway_executable
+    ));
 
     // Parse --port argument
     if let Some(pos) = args.iter().position(|a| a == "--port") {
@@ -68,27 +75,39 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         }
     }
 
-    // Check if port is available before starting TUI
+    // Bind the gateway listener BEFORE spawning anything, so the interpreter
+    // can never hit a race where it connects before the port is open.
     let port = state.config.gateway_port;
-    if let Err(e) = std::net::TcpListener::bind(format!("0.0.0.0:{port}")) {
-        eprintln!("Cannot start stride: port {port} is already in use ({e}).");
-        eprintln!("Another stride instance may be running. Use )OFF or Ctrl+X to quit it first.");
-        eprintln!("Or specify a different port with --port <number>.");
-        std::process::exit(1);
-    }
+    let addr = format!("{}:{}", state.config.gateway_host, port);
+    let listener = match std::net::TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Cannot start stride: cannot bind {addr} ({e}).");
+            eprintln!(
+                "Another stride instance may be running. Use )OFF or Ctrl+X to quit it first."
+            );
+            eprintln!("Or specify a different port with --port <number>.");
+            std::process::exit(1);
+        }
+    };
+    debug_log(&format!("[main] bound gateway listener at {addr}"));
 
     // Start the gateway server (listens for interpreters to connect).
-    let (server, gateway_rx, _gateway_tx) = GatewayServer::new(port);
+    let (server, gateway_rx, _gateway_tx) =
+        GatewayServer::new(state.config.gateway_host.clone(), port);
     let interpreter = server.interpreter();
     let server_port = server.port;
     std::thread::spawn(move || {
-        let _ = server.run();
+        let _ = server.run(listener);
     });
     state.gateway_status = format!("listening on port {}", server_port);
 
-    // Auto-start interpreter if configured
+    // Auto-start interpreter if configured (listener is already up by now)
     if state.config.auto_connect {
-        debug_log(&format!("[main] auto_connect enabled, trying to spawn: {} {}", state.config.gateway_executable, state.config.gateway_args));
+        debug_log(&format!(
+            "[main] auto_connect enabled, trying to spawn: {} {}",
+            state.config.gateway_executable, state.config.gateway_args
+        ));
         try_spawn_interpreter(&state.config);
     }
 
@@ -107,7 +126,11 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
         // Check for messages from the gateway server.
         match gateway_rx.try_recv() {
             Ok(GatewayMessage::Connected { addr, info }) => {
-                state.gateway_status = format!("connected to {addr} ({})", info.vendor);
+                state.gateway_status = if info.vendor.is_empty() {
+                    format!("connected to {addr}")
+                } else {
+                    format!("connected to {addr} ({})", info.vendor)
+                };
             }
             Ok(GatewayMessage::Disconnected) => {
                 state.gateway_status = format!("listening on port {}", state.config.gateway_port);
@@ -117,7 +140,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
                 // Skip reserved types (0, 6, 10, 13) and status (9)
                 match output_type {
                     0 | 6 | 10 | 13 => {} // reserved
-                    9 => {} // status window info
+                    9 => {}               // status window info
                     _ => state.push_result(text),
                 }
             }
@@ -314,7 +337,11 @@ fn handle_menu_key(
     false
 }
 
-fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, item: usize) -> bool {
+fn menu_action(
+    state: &mut EditorState,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
+    item: usize,
+) -> bool {
     match item {
         0 => {
             *state = EditorState::new(state.config.clone());
@@ -343,7 +370,11 @@ fn menu_action(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Ga
     false
 }
 
-fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, trace: u8) {
+fn eval_current_line(
+    state: &mut EditorState,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
+    trace: u8,
+) {
     let line = state.buffer_mut().current_line().trim().to_string();
     if line.is_empty() {
         return;
@@ -351,23 +382,30 @@ fn eval_current_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sen
     eval_line(state, interpreter, &line, trace);
 }
 
-fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>, line: &str, trace: u8) {
+fn eval_line(
+    state: &mut EditorState,
+    interpreter: &Arc<Mutex<Option<Sender<GatewayCommand>>>>,
+    line: &str,
+    trace: u8,
+) {
     let (tx, rx) = channel::<ExecuteResult>();
-    
+
     // Try to send to connected interpreter
     let sent = {
         let ints = interpreter.lock().unwrap();
         if let Some(ref sender) = *ints {
-            sender.send(GatewayCommand::Execute {
-                text: line.to_string(),
-                trace,
-                response_tx: tx,
-            }).is_ok()
+            sender
+                .send(GatewayCommand::Execute {
+                    text: line.to_string(),
+                    trace,
+                    response_tx: tx,
+                })
+                .is_ok()
         } else {
             false
         }
     };
-    
+
     if sent {
         // Wait for response (with timeout)
         match rx.recv_timeout(Duration::from_secs(5)) {
@@ -410,9 +448,17 @@ fn try_spawn_interpreter(config: &EditorConfig) {
         }
     }
 
+    debug_log(&format!(
+        "[main] spawning interpreter: {} {:?} (env: {:?})",
+        exec, args, config.gateway_env
+    ));
     match cmd.spawn() {
-        Ok(_) => {}
-        Err(_e) => {}
+        Ok(child) => {
+            debug_log(&format!("[main] spawned interpreter pid={}", child.id()));
+        }
+        Err(e) => {
+            debug_log(&format!("[main] FAILED to spawn interpreter: {e}"));
+        }
     }
 }
 
@@ -433,7 +479,11 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers)
                 }
                 _ => {}
             },
-            Dialog::OpenFile { path, cursor, files } => {
+            Dialog::OpenFile {
+                path,
+                cursor,
+                files,
+            } => {
                 match code {
                     KeyCode::Esc => {
                         state.dialog = None;
