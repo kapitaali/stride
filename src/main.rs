@@ -75,6 +75,11 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     });
     state.gateway_status = format!("listening on port {}", server_port);
 
+    // Auto-start interpreter if configured and not already running
+    if state.config.auto_connect {
+        try_spawn_interpreter(&state.config);
+    }
+
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
@@ -373,7 +378,31 @@ fn eval_line(state: &mut EditorState, interpreter: &Arc<Mutex<Option<Sender<Gate
     }
 }
 
-/// Handle keys when a dialog is open.
+/// Try to spawn the interpreter executable if auto_connect is enabled.
+fn try_spawn_interpreter(config: &EditorConfig) {
+    use std::process::Command;
+
+    let exec = &config.gateway_executable;
+    let args = config.gateway_args.split_whitespace().collect::<Vec<_>>();
+
+    let mut cmd = Command::new(exec);
+    cmd.args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    for env_var in &config.gateway_env {
+        if let Some((key, value)) = env_var.split_once('=') {
+            cmd.env(key, value);
+        }
+    }
+
+    match cmd.spawn() {
+        Ok(_) => {}
+        Err(_e) => {}
+    }
+}
+
 fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
         match dialog {
