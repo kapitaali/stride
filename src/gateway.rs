@@ -252,26 +252,31 @@ fn handle_interpreter(
 
 /// Perform the RIDE handshake.
 ///
-/// Protocol:
+/// Protocol (from protocol.md):
 /// 1. Both sides send "SupportedProtocols=2\n" (raw, no framing)
-/// 2. Both sides respond "UsingProtocol=2\n" (raw, no framing)
+/// 2. Both sides send "UsingProtocol=2\n" (raw, no framing)
 /// 3. Both sides send ["Identify", {"apiVersion": N, "identity": I}] (JSON)
-/// 4. If apiVersion >= 1, interpreter responds with ["ReplyIdentify", {...}]
+/// 4. Interpreter responds with ["ReplyIdentify", {...}]
 fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
-    // Step 1: Read "SupportedProtocols=2\n" from interpreter.
-    let mut buf = [0u8; 1024];
-    let n = match read_line(stream) {
+    // Step 1: Send our "SupportedProtocols=2\n" to interpreter (raw, no framing).
+    if stream.write_all(b"SupportedProtocols=2\n").is_err() {
+        return None;
+    }
+    if stream.flush().is_err() {
+        return None;
+    }
+
+    // Step 2: Read "SupportedProtocols=2\n" from interpreter.
+    match read_line(stream) {
         Ok(line) => {
             if !line.contains("SupportedProtocols=2") {
                 return None;
             }
-            0
         }
         Err(_) => return None,
     };
-    let _ = n;
 
-    // Step 2: Send "UsingProtocol=2\n" to interpreter.
+    // Step 3: Send "UsingProtocol=2\n" to interpreter.
     if stream.write_all(b"UsingProtocol=2\n").is_err() {
         return None;
     }
@@ -279,7 +284,17 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         return None;
     }
 
-    // Step 3: Read interpreter's Identify message (JSON).
+    // Step 4: Read "UsingProtocol=2\n" from interpreter.
+    match read_line(stream) {
+        Ok(line) => {
+            if !line.contains("UsingProtocol=2") {
+                return None;
+            }
+        }
+        Err(_) => return None,
+    };
+
+    // Step 5: Send our Identify message (JSON, framed).
     let identify_raw = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return None,
