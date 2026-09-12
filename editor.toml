@@ -10,5 +10,5 @@ gateway_args = "--ride"
 # Environment variables to set when spawning the gateway
 gateway_env = ["RIDE_INIT=CONNECT:localhost:4502"]
 apl_version = "GNU APL 2.0 (Rust)"
-auto_connect = true
+auto_connect = false
 max_results = 500

@@ -7,8 +7,8 @@
 //!   Total length = 8 + len(payload in bytes)
 //!
 //! Handshake (first two messages, NOT JSON-encoded):
-//!   1. Both sides send "SupportedProtocols=2"
-//!   2. Both sides send "UsingProtocol=2"
+//!   1. Both sides send "SupportedProtocols=2" (raw, no framing)
+//!   2. Both sides send "UsingProtocol=2" (raw, no framing)
 //!
 //! After handshake, all messages are JSON 2-element arrays: ["Name", {...}]
 
@@ -130,11 +130,7 @@ impl GatewayServer {
         let interpreter = Arc::new(Mutex::new(None));
 
         (
-            GatewayServer {
-                port,
-                tx,
-                interpreter,
-            },
+            GatewayServer { port, tx, interpreter },
             ui_rx,
             ui_tx,
         )
@@ -273,22 +269,18 @@ fn send_handshake_message(stream: &mut TcpStream, msg: &str) -> bool {
 }
 
 fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
-    if !send_handshake_message(stream, "SupportedProtocols=2") {
-        return None;
+    // Step 1: Read "SupportedProtocols=2" from interpreter (raw, no framing).
+    match read_handshake_response(stream, "SupportedProtocols=2") {
+        true => {}
+        false => return None,
     }
 
-    if !read_handshake_response(stream, "SupportedProtocols=2") {
-        return None;
-    }
-
+    // Step 2: Send "UsingProtocol=2" to interpreter.
     if !send_handshake_message(stream, "UsingProtocol=2") {
         return None;
     }
 
-    if !read_handshake_response(stream, "UsingProtocol=2") {
-        return None;
-    }
-
+    // Step 3: Read interpreter's Identify message (JSON, framed).
     let identify_raw = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return None,
@@ -305,17 +297,19 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         .and_then(|obj| obj["apiVersion"].as_i64())
         .unwrap_or(0);
 
+    // Step 4: Send our Identify message.
     let our_identify = serde_json::json!([
         "Identify",
         {
             "apiVersion": api_version,
-            "identity": 1
+            "identity": 1  // Ride
         }
     ]);
     if write_frame(stream, &our_identify.to_string()).is_err() {
         return None;
     }
 
+    // Step 5: Read ReplyIdentify.
     let reply_raw = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return None,
@@ -326,6 +320,7 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         Err(_) => return None,
     };
 
+    // Parse interpreter info from ReplyIdentify.
     let info = if let Some(arr) = reply.as_array() {
         if let Some(obj) = arr.get(1) {
             InterpreterInfo {
