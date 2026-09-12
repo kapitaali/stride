@@ -1,7 +1,7 @@
 //! APL editor TUI: entry point, event loop, gateway wiring.
 
 use std::env;
-use std::io::{self, IsTerminal};
+use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ use stride::config::EditorConfig;
 use stride::editor::Buffer;
 use stride::gateway::{ExecuteResult, GatewayCommand, GatewayMessage, GatewayServer};
 use stride::ui::{self, Dialog, EditorState};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
 fn main() {

@@ -163,7 +163,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
                 Constraint::Length(palette_rows as u16),
                 Constraint::Percentage(50),
                 Constraint::Percentage(50),
-                Constraint::Length(1),
+                Constraint::Length(3),
             ])
             .split(frame.area());
 
@@ -230,7 +230,7 @@ pub fn layout_constraints(palette_rows: usize) -> Vec<Constraint> {
         Constraint::Length(palette_rows as u16), // palette
         Constraint::Min(4),                      // editor
         Constraint::Length(6),                   // result pane
-        Constraint::Length(1),                   // status bar
+        Constraint::Length(3),                   // status bar (needs 3 for borders + content)
     ]
 }
 

@@ -7,8 +7,8 @@
 //!   Total length = 8 + len(payload in bytes)
 //!
 //! Handshake (first two messages, NOT JSON-encoded):
-//!   1. Both sides send "SupportedProtocols=2\n"
-//!   2. Both sides respond "UsingProtocol=2\n"
+//!   1. Both sides send "SupportedProtocols=2"
+//!   2. Both sides send "UsingProtocol=2"
 //!
 //! After handshake, all messages are JSON 2-element arrays: ["Name", {...}]
 
@@ -21,17 +21,22 @@ use std::thread;
 /// Messages from the gateway server to the UI.
 #[derive(Debug, Clone)]
 pub enum GatewayMessage {
-    Connected { addr: String, info: InterpreterInfo },
+    Connected {
+        addr: String,
+        info: InterpreterInfo,
+    },
     Disconnected,
-    /// Session output from interpreter.
-    SessionOutput { text: String, output_type: u8 },
-    /// Set prompt type from interpreter.
-    SetPromptType { prompt_type: u8 },
-    /// Had error from interpreter.
+    SessionOutput {
+        text: String,
+        output_type: u8,
+    },
+    SetPromptType {
+        prompt_type: u8,
+    },
     HadError,
-    /// Reply to GetLog request.
-    GetLogReply { lines: Vec<LogLine> },
-    /// Interpreter status update.
+    GetLogReply {
+        lines: Vec<LogLine>,
+    },
     InterpreterStatus {
         io: i64,
         dq: i64,
@@ -42,8 +47,10 @@ pub enum GatewayMessage {
         num_threads: i64,
         tid: i64,
     },
-    /// Configuration reply.
-    Configuration { name: String, value: String },
+    Configuration {
+        name: String,
+        value: String,
+    },
 }
 
 /// Log line with type and group.
@@ -123,7 +130,11 @@ impl GatewayServer {
         let interpreter = Arc::new(Mutex::new(None));
 
         (
-            GatewayServer { port, tx, interpreter },
+            GatewayServer {
+                port,
+                tx,
+                interpreter,
+            },
             ui_rx,
             ui_tx,
         )
@@ -133,14 +144,13 @@ impl GatewayServer {
         self.interpreter.clone()
     }
 
-    /// Start the gateway server. This method blocks.
     pub fn run(self) -> std::io::Result<()> {
         let listener = match TcpListener::bind(format!("127.0.0.1:{}", self.port)) {
             Ok(l) => l,
             Err(e) => {
                 let _ = self.tx.send(GatewayMessage::SessionOutput {
                     text: format!("gateway: cannot bind port {}: {}", self.port, e),
-                    output_type: 3, // stderr
+                    output_type: 3,
                 });
                 return Err(e);
             }
@@ -171,65 +181,64 @@ impl GatewayServer {
     }
 }
 
-/// Handle a single interpreter connection.
 fn handle_interpreter(
     mut stream: TcpStream,
     tx: Sender<GatewayMessage>,
     interpreter: Arc<Mutex<Option<Sender<GatewayCommand>>>>,
     addr: String,
 ) {
-    // Perform the RIDE handshake.
     let info = match perform_handshake(&mut stream) {
         Some(info) => info,
         None => return,
     };
 
-    // Create a channel for sending commands to this interpreter.
     let (cmd_tx, cmd_rx) = channel::<GatewayCommand>();
 
-    // Register this interpreter.
     {
         let mut ints = interpreter.lock().unwrap();
         *ints = Some(cmd_tx.clone());
     }
 
-    // Notify UI that interpreter is connected.
     let _ = tx.send(GatewayMessage::Connected {
         addr: addr.clone(),
         info,
     });
 
-    // Process commands from the UI.
     for cmd in cmd_rx {
         match cmd {
-            GatewayCommand::Execute { text, trace, response_tx } => {
-                match send_execute(&mut stream, &text, trace) {
-                    Ok(()) => {
-                        let _ = response_tx.send(ExecuteResult::Ok);
-                    }
-                    Err(e) => {
-                        let _ = response_tx.send(ExecuteResult::Error(e.clone()));
-                        let _ = tx.send(GatewayMessage::SessionOutput {
-                            text: e,
-                            output_type: 3,
-                        });
-                    }
+            GatewayCommand::Execute {
+                text,
+                trace,
+                response_tx,
+            } => match send_execute(&mut stream, &text, trace) {
+                Ok(()) => {
+                    let _ = response_tx.send(ExecuteResult::Ok);
                 }
-            }
-            GatewayCommand::GetLog { max_lines, response_tx } => {
-                match send_get_log(&mut stream, max_lines) {
-                    Ok(lines) => {
-                        let _ = tx.send(GatewayMessage::GetLogReply { lines: lines.clone() });
-                        let _ = response_tx.send(lines);
-                    }
-                    Err(e) => {
-                        let _ = tx.send(GatewayMessage::SessionOutput {
-                            text: e,
-                            output_type: 3,
-                        });
-                    }
+                Err(e) => {
+                    let _ = response_tx.send(ExecuteResult::Error(e.clone()));
+                    let _ = tx.send(GatewayMessage::SessionOutput {
+                        text: e,
+                        output_type: 3,
+                    });
                 }
-            }
+            },
+            GatewayCommand::GetLog {
+                max_lines,
+                response_tx,
+            } => match send_get_log(&mut stream, max_lines) {
+                Ok(lines) => {
+                    let _ = tx.send(GatewayMessage::GetLogReply {
+                        lines: lines.clone(),
+                    });
+                    let _ = response_tx.send(lines);
+                }
+                Err(e) => {
+                    let _ = tx.send(GatewayMessage::SessionOutput {
+                        text: e,
+                        output_type: 3,
+                    });
+                }
+            },
             GatewayCommand::SetPW { pw } => {
                 let _ = send_set_pw(&mut stream, pw);
             }
@@ -240,61 +249,46 @@ fn handle_interpreter(
         }
     }
 
-    // Unregister this interpreter.
     {
         let mut ints = interpreter.lock().unwrap();
         *ints = None;
     }
 
-    // Channel closed, interpreter disconnected.
     let _ = tx.send(GatewayMessage::Disconnected);
 }
 
-/// Perform the RIDE handshake.
-///
-/// Protocol (from protocol.md):
-/// 1. Both sides send "SupportedProtocols=2\n" (raw, no framing)
-/// 2. Both sides send "UsingProtocol=2\n" (raw, no framing)
-/// 3. Both sides send ["Identify", {"apiVersion": N, "identity": I}] (JSON)
-/// 4. Interpreter responds with ["ReplyIdentify", {...}]
+fn read_handshake_response(stream: &mut TcpStream, expected: &str) -> bool {
+    let mut buf = [0u8; 1024];
+    match stream.read(&mut buf) {
+        Ok(n) if n > 0 => {
+            let response = String::from_utf8_lossy(&buf[..n]);
+            response.contains(expected)
+        }
+        _ => false,
+    }
+}
+
+fn send_handshake_message(stream: &mut TcpStream, msg: &str) -> bool {
+    stream.write_all(msg.as_bytes()).is_ok() && stream.flush().is_ok()
+}
+
 fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
-    // Step 1: Send our "SupportedProtocols=2\n" to interpreter (raw, no framing).
-    if stream.write_all(b"SupportedProtocols=2\n").is_err() {
-        return None;
-    }
-    if stream.flush().is_err() {
+    if !send_handshake_message(stream, "SupportedProtocols=2") {
         return None;
     }
 
-    // Step 2: Read "SupportedProtocols=2\n" from interpreter.
-    match read_line(stream) {
-        Ok(line) => {
-            if !line.contains("SupportedProtocols=2") {
-                return None;
-            }
-        }
-        Err(_) => return None,
-    };
-
-    // Step 3: Send "UsingProtocol=2\n" to interpreter.
-    if stream.write_all(b"UsingProtocol=2\n").is_err() {
-        return None;
-    }
-    if stream.flush().is_err() {
+    if !read_handshake_response(stream, "SupportedProtocols=2") {
         return None;
     }
 
-    // Step 4: Read "UsingProtocol=2\n" from interpreter.
-    match read_line(stream) {
-        Ok(line) => {
-            if !line.contains("UsingProtocol=2") {
-                return None;
-            }
-        }
-        Err(_) => return None,
-    };
+    if !send_handshake_message(stream, "UsingProtocol=2") {
+        return None;
+    }
 
-    // Step 5: Send our Identify message (JSON, framed).
+    if !read_handshake_response(stream, "UsingProtocol=2") {
+        return None;
+    }
+
     let identify_raw = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return None,
@@ -311,19 +305,17 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         .and_then(|obj| obj["apiVersion"].as_i64())
         .unwrap_or(0);
 
-    // Step 4: Send our Identify message.
     let our_identify = serde_json::json!([
         "Identify",
         {
             "apiVersion": api_version,
-            "identity": 1  // Ride
+            "identity": 1
         }
     ]);
     if write_frame(stream, &our_identify.to_string()).is_err() {
         return None;
     }
 
-    // Step 5: Read ReplyIdentify (apiVersion >= 1) or process Identify response.
     let reply_raw = match read_frame(stream) {
         Ok(msg) => msg,
         Err(_) => return None,
@@ -334,7 +326,6 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         Err(_) => return None,
     };
 
-    // Parse interpreter info from ReplyIdentify.
     let info = if let Some(arr) = reply.as_array() {
         if let Some(obj) = arr.get(1) {
             InterpreterInfo {
@@ -358,7 +349,6 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
     Some(info)
 }
 
-/// Send Execute command to interpreter.
 fn send_execute(stream: &mut TcpStream, text: &str, trace: u8) -> Result<(), String> {
     let cmd = serde_json::json!([
         "Execute",
@@ -371,7 +361,6 @@ fn send_execute(stream: &mut TcpStream, text: &str, trace: u8) -> Result<(), Str
         .map_err(|e| format!("failed to send Execute: {}", e))
 }
 
-/// Send GetLog command to interpreter.
 fn send_get_log(stream: &mut TcpStream, max_lines: i64) -> Result<Vec<LogLine>, String> {
     let cmd = serde_json::json!([
         "GetLog",
@@ -383,7 +372,6 @@ fn send_get_log(stream: &mut TcpStream, max_lines: i64) -> Result<Vec<LogLine>, 
     write_frame(stream, &cmd.to_string())
         .map_err(|e| format!("failed to send GetLog: {}", e))?;
 
-    // Read ReplyGetLog response.
     let response = read_frame(stream).map_err(|e| format!("failed to read ReplyGetLog: {}", e))?;
     let value: serde_json::Value = serde_json::from_str(&response)
         .map_err(|e| format!("invalid JSON in ReplyGetLog: {}", e))?;
@@ -391,7 +379,6 @@ fn send_get_log(stream: &mut TcpStream, max_lines: i64) -> Result<Vec<LogLine>, 
     parse_get_log_response(&value)
 }
 
-/// Parse ReplyGetLog response into LogLines.
 fn parse_get_log_response(value: &serde_json::Value) -> Result<Vec<LogLine>, String> {
     let arr = value.as_array().ok_or("ReplyGetLog is not an array")?;
     let result = arr.get(1).and_then(|o| o["result"].as_array());
@@ -400,14 +387,12 @@ fn parse_get_log_response(value: &serde_json::Value) -> Result<Vec<LogLine>, Str
     if let Some(items) = result {
         for item in items {
             if let Some(text) = item.as_str() {
-                // Text format.
                 lines.push(LogLine {
                     text: text.to_string(),
                     output_type: 1,
                     group: 1,
                 });
             } else if let Some(obj) = item.as_object() {
-                // JSON format.
                 lines.push(LogLine {
                     text: obj["text"].as_str().unwrap_or("").to_string(),
                     output_type: obj["type"].as_u64().unwrap_or(1) as u8,
@@ -419,69 +404,51 @@ fn parse_get_log_response(value: &serde_json::Value) -> Result<Vec<LogLine>, Str
     Ok(lines)
 }
 
-/// Send SetPW command to interpreter.
 fn send_set_pw(stream: &mut TcpStream, pw: u16) -> Result<(), String> {
     let cmd = serde_json::json!(["SetPW", {"pw": pw}]);
     write_frame(stream, &cmd.to_string())
         .map_err(|e| format!("failed to send SetPW: {}", e))
 }
 
-/// Send Exit command to interpreter.
 fn send_exit(stream: &mut TcpStream) -> Result<(), String> {
     let cmd = serde_json::json!(["Exit", {"code": 0}]);
     write_frame(stream, &cmd.to_string())
         .map_err(|e| format!("failed to send Exit: {}", e))
 }
 
-/// Read a line from the stream (for handshake).
-fn read_line(stream: &mut TcpStream) -> Result<String, String> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    loop {
-        match stream.read_exact(&mut byte) {
-            Ok(()) => {
-                if byte[0] == b'\n' {
-                    break;
-                }
-                buf.push(byte[0]);
-            }
-            Err(e) => return Err(format!("read error: {}", e)),
-        }
-    }
-    String::from_utf8(buf).map_err(|_| "invalid UTF-8".to_string())
-}
-
-/// Read a framed message from the stream.
 fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
     let mut header = [0u8; 8];
-    stream.read_exact(&mut header).map_err(|e| format!("read error: {}", e))?;
+    stream
+        .read_exact(&mut header)
+        .map_err(|e| format!("read error: {}", e))?;
 
     let frame_len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
     if frame_len < 8 {
         return Err("frame too short".to_string());
     }
 
-    // Verify "RIDE" magic.
     if &header[4..8] != b"RIDE" {
         return Err("invalid frame magic".to_string());
     }
 
     let payload_len = frame_len - 8;
     let mut payload = vec![0u8; payload_len];
-    stream.read_exact(&mut payload).map_err(|e| format!("read error: {}", e))?;
+    stream
+        .read_exact(&mut payload)
+        .map_err(|e| format!("read error: {}", e))?;
 
     String::from_utf8(payload).map_err(|_| "invalid UTF-8".to_string())
 }
 
-/// Write a framed message to the stream.
 fn write_frame(stream: &mut TcpStream, payload: &str) -> Result<(), String> {
     let f = frame(payload);
-    stream.write_all(&f).map_err(|e| format!("write error: {}", e))?;
+    stream
+        .write_all(&f)
+        .map_err(|e| format!("write error: {}", e))?;
     stream.flush().map_err(|e| format!("flush error: {}", e))?;
     Ok(())
 }
 
-/// Frame a JSON payload for the RIDE protocol.
 fn frame(payload: &str) -> Vec<u8> {
     let mut buf = Vec::with_capacity(8 + payload.len());
     let total_len = (8 + payload.len()) as u32;
@@ -498,7 +465,7 @@ mod tests {
     #[test]
     fn test_frame() {
         let f = frame("test");
-        assert_eq!(f.len(), 12); // 4 bytes len + 4 bytes "RIDE" + 4 bytes "test"
+        assert_eq!(f.len(), 12);
         assert_eq!(&f[4..8], b"RIDE");
         assert_eq!(&f[8..], b"test");
     }
