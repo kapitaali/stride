@@ -154,7 +154,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
             let chunks = Layout::vertical(layout_constraints(palette_rows)).split(frame.area());
             frame.render_widget(render_palette(state), chunks[0]);
             frame.render_widget(render_editor(state), chunks[1]);
-            frame.render_widget(render_results(state), chunks[2]);
+            frame.render_widget(render_results(state, chunks[2].height), chunks[2]);
             frame.render_widget(render_status_bar(state), chunks[3]);
         }
         2 => {
@@ -175,7 +175,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
                     .split(main_rows[1]);
 
             frame.render_widget(render_editor(state), middle[0]);
-            frame.render_widget(render_results(state), middle[1]);
+            frame.render_widget(render_results(state, middle[1].height), middle[1]);
             frame.render_widget(render_status_bar(state), main_rows[3]);
         }
         3 => {
@@ -197,7 +197,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
             frame.render_widget(render_status_bar(state), left[2]);
 
             // Right side: results
-            frame.render_widget(render_results(state), main_split[1]);
+            frame.render_widget(render_results(state, main_split[1].height), main_split[1]);
         }
         _ => {}
     }
@@ -437,18 +437,20 @@ pub fn render_status_bar(state: &EditorState) -> Paragraph<'static> {
     Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL))
 }
 
-/// Build the result pane widget. Shows the last N lines that fit in the pane.
-pub fn render_results(state: &EditorState) -> Paragraph<'static> {
+/// Render the results pane. `height` is the area the widget will occupy —
+/// needed so the bottom-pinned scroll shows every line that fits and only
+/// scrolls away what actually overflows. (Scrolling by `total - 1` skips all
+/// but the last line; ratatui does not clamp the offset for us.)
+pub fn render_results(state: &EditorState, height: u16) -> Paragraph<'static> {
     let text = if state.results.is_empty() {
         "(no results yet — Ctrl-E evaluates the current line)".to_string()
     } else {
         state.results.join("\n")
     };
     // Count actual lines (results may contain multi-line boxed output).
-    let total_lines = text.lines().count();
-    // Scroll to show the bottom: ratatui clamps the offset so the last
-    // lines are pinned to the widget bottom regardless of content height.
-    let scroll = (total_lines as u16).saturating_sub(1);
+    let total_lines = text.lines().count() as u16;
+    let visible = height.saturating_sub(2); // top + bottom border
+    let scroll = total_lines.saturating_sub(visible);
     Paragraph::new(text)
         .block(
             Block::default()
@@ -670,8 +672,88 @@ mod tests {
     #[test]
     fn render_results_shows_placeholder_when_empty() {
         let s = sample_state();
-        let w = render_results(&s);
+        let w = render_results(&s, 6);
         // Just ensure it builds; content is private to Paragraph.
         let _ = w;
+    }
+
+    /// Regression: a multi-line boxed result must be shown in full when it
+    /// fits the pane. (Scrolling `total - 1` skipped all but the last line.)
+    #[test]
+    fn render_results_shows_all_lines_of_multiline_output() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut s = sample_state();
+        s.results.push("┏→━━━━┓\n┃1 2 3┃\n┗━━━━━┛".to_string());
+
+        let backend = TestBackend::new(20, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                f.render_widget(render_results(&s, area.height), area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut rendered = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                rendered.push_str(buffer[(x, y)].symbol());
+            }
+            rendered.push('\n');
+        }
+        assert!(
+            rendered.contains("┏→━━━━┓"),
+            "top line missing; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("┃1 2 3┃"),
+            "content line missing; got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("┗━━━━━┛"),
+            "bottom line missing; got:\n{rendered}"
+        );
+    }
+
+    /// The pane still pins to the bottom once the output outgrows it: the
+    /// newest lines must remain visible.
+    #[test]
+    fn render_results_pins_to_bottom_on_overflow() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut s = sample_state();
+        for i in 0..20 {
+            s.results.push(format!("line {i}"));
+        }
+
+        let backend = TestBackend::new(30, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                f.render_widget(render_results(&s, area.height), area);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut rendered = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                rendered.push_str(buffer[(x, y)].symbol());
+            }
+            rendered.push('\n');
+        }
+        assert!(
+            rendered.contains("line 19"),
+            "newest line missing:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("line 0"),
+            "older lines should have scrolled away:\n{rendered}"
+        );
     }
 }
