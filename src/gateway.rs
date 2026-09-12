@@ -420,11 +420,13 @@ fn handle_interpreter(
 /// Read the client's opening handshake bytes and detect its framing style.
 /// Returns `(bytes, framed)`: `framed == true` when the payload starts with a
 /// RIDE frame header (e.g. Kap), `false` for plain text clients (rust-apl).
+/// Waits for the complete first frame: strictly-framed clients flush each
+/// handshake block separately, so the header alone proves nothing yet.
 fn read_client_hello(stream: &mut TcpStream) -> Result<(Vec<u8>, bool), String> {
     let mut buf = [0u8; 4096];
     let mut collected: Vec<u8> = Vec::new();
 
-    for _ in 0..3 {
+    for _ in 0..8 {
         let n = stream
             .read(&mut buf)
             .map_err(|e| format!("read error: {}", e))?;
@@ -433,18 +435,32 @@ fn read_client_hello(stream: &mut TcpStream) -> Result<(Vec<u8>, bool), String> 
         }
         collected.extend_from_slice(&buf[..n]);
 
-        // A framed client starts with [len]["RIDE"]; detect the RIDE magic.
-        let framed = collected.len() >= 8 && &collected[4..8] == b"RIDE";
-        let has_supported = collected
+        // A framed client starts with [len]["RIDE"]; only decide once the
+        // whole first frame is here, otherwise a bare 8-byte header (Kap
+        // flushes per block) would pass with no payload to check.
+        if collected.len() >= 8 && &collected[4..8] == b"RIDE" {
+            let frame_len =
+                u32::from_be_bytes([collected[0], collected[1], collected[2], collected[3]])
+                    as usize;
+            if frame_len >= 8 && collected.len() >= frame_len {
+                debug_log(&format!(
+                    "[gateway] client hello: {} bytes, framed",
+                    collected.len()
+                ));
+                return Ok((collected, true));
+            }
+            // Header complete but payload still in flight: keep reading.
+            continue;
+        }
+        if collected
             .windows(b"SupportedProtocols=2".len())
-            .any(|w| w == b"SupportedProtocols=2");
-        if framed || has_supported {
+            .any(|w| w == b"SupportedProtocols=2")
+        {
             debug_log(&format!(
-                "[gateway] client hello: {} bytes, {}",
-                collected.len(),
-                if framed { "framed" } else { "raw" }
+                "[gateway] client hello: {} bytes, raw",
+                collected.len()
             ));
-            return Ok((collected, framed));
+            return Ok((collected, false));
         }
     }
 
