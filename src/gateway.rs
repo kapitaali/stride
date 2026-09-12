@@ -17,6 +17,18 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::fs::OpenOptions;
+use std::io::Write as IoWrite;
+
+fn debug_log(msg: &str) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/stride_debug.log")
+    {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
 
 /// Messages from the gateway server to the UI.
 #[derive(Debug, Clone)]
@@ -130,7 +142,11 @@ impl GatewayServer {
         let interpreter = Arc::new(Mutex::new(None));
 
         (
-            GatewayServer { port, tx, interpreter },
+            GatewayServer {
+                port,
+                tx,
+                interpreter,
+            },
             ui_rx,
             ui_tx,
         )
@@ -141,14 +157,14 @@ impl GatewayServer {
     }
 
     pub fn run(self) -> std::io::Result<()> {
-        eprintln!("[gateway] attempting to bind port {}...", self.port);
+        debug_log(&format!("[gateway] attempting to bind port {}...", self.port));
         let listener = match TcpListener::bind(format!("0.0.0.0:{}", self.port)) {
             Ok(l) => {
-                eprintln!("[gateway] successfully bound to port {}", self.port);
+                debug_log(&format!("[gateway] successfully bound to port {} (0.0.0.0)", self.port));
                 l
             }
             Err(e) => {
-                eprintln!("[gateway] FAILED to bind port {}: {}", self.port, e);
+                debug_log(&format!("[gateway] FAILED to bind port {}: {}", self.port, e));
                 let _ = self.tx.send(GatewayMessage::SessionOutput {
                     text: format!("gateway: cannot bind port {}: {}", self.port, e),
                     output_type: 3,
@@ -160,6 +176,7 @@ impl GatewayServer {
         let tx = self.tx.clone();
         let interpreter = self.interpreter.clone();
 
+        debug_log(&format!("[gateway] waiting for connections on port {}...", self.port));
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
@@ -167,7 +184,7 @@ impl GatewayServer {
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_default();
-                    eprintln!("[gateway] interpreter connected from {}", addr);
+                    debug_log(&format!("[gateway] interpreter connected from {}", addr));
                     let tx = tx.clone();
                     let interpreter = interpreter.clone();
 
@@ -176,7 +193,7 @@ impl GatewayServer {
                     });
                 }
                 Err(e) => {
-                    eprintln!("[gateway] accept error: {}", e);
+                    debug_log(&format!("[gateway] accept error: {}", e));
                 }
             }
         }
@@ -265,53 +282,53 @@ fn read_handshake_response(stream: &mut TcpStream, expected: &str) -> bool {
     let mut buf = [0u8; 1024];
     match stream.read(&mut buf) {
         Ok(0) => {
-            eprintln!("[gateway] recv: EOF");
+            debug_log("[gateway] recv: EOF");
             false
         }
         Ok(n) => {
             let response = String::from_utf8_lossy(&buf[..n]);
-            eprintln!("[gateway] recv: {:?}", response);
+            debug_log(&format!("[gateway] recv {} bytes: {:?}", n, response));
             response.contains(expected)
         }
         Err(e) => {
-            eprintln!("[gateway] recv error: {}", e);
+            debug_log(&format!("[gateway] recv error: {}", e));
             false
         }
     }
 }
 
 fn send_handshake_message(stream: &mut TcpStream, msg: &str) -> bool {
-    eprintln!("[gateway] send: {:?}", msg);
+    debug_log(&format!("[gateway] send: {:?}", msg));
     stream.write_all(msg.as_bytes()).is_ok() && stream.flush().is_ok()
 }
 
 fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
-    eprintln!("[gateway] starting handshake...");
+    debug_log("[gateway] starting handshake...");
 
-    // Step 1: Read "SupportedProtocols=2" from interpreter (raw, no framing).
+    // Step 1: Read "SupportedProtocols=2" from interpreter.
     match read_handshake_response(stream, "SupportedProtocols=2") {
-        true => eprintln!("[gateway] got SupportedProtocols=2"),
+        true => debug_log("[gateway] got SupportedProtocols=2"),
         false => {
-            eprintln!("[gateway] FAILED to get SupportedProtocols=2");
+            debug_log("[gateway] FAILED to get SupportedProtocols=2");
             return None;
         }
     }
 
     // Step 2: Send "UsingProtocol=2" to interpreter.
     if !send_handshake_message(stream, "UsingProtocol=2") {
-        eprintln!("[gateway] FAILED to send UsingProtocol=2");
+        debug_log("[gateway] FAILED to send UsingProtocol=2");
         return None;
     }
-    eprintln!("[gateway] sent UsingProtocol=2");
+    debug_log("[gateway] sent UsingProtocol=2");
 
     // Step 3: Read interpreter's Identify message (JSON, framed).
     let identify_raw = match read_frame(stream) {
         Ok(msg) => {
-            eprintln!("[gateway] got identify: {}", msg);
+            debug_log(&format!("[gateway] got identify: {}", msg));
             msg
         }
         Err(e) => {
-            eprintln!("[gateway] FAILED to read identify: {}", e);
+            debug_log(&format!("[gateway] FAILED to read identify: {}", e));
             return None;
         }
     };
@@ -319,7 +336,7 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
     let identify: serde_json::Value = match serde_json::from_str(&identify_raw) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[gateway] FAILED to parse identify JSON: {}", e);
+            debug_log(&format!("[gateway] FAILED to parse identify JSON: {}", e));
             return None;
         }
     };
@@ -329,7 +346,7 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         .and_then(|arr| arr.get(1))
         .and_then(|obj| obj["apiVersion"].as_i64())
         .unwrap_or(0);
-    eprintln!("[gateway] api_version: {}", api_version);
+    debug_log(&format!("[gateway] api_version: {}", api_version));
 
     // Step 4: Send our Identify message.
     let our_identify = serde_json::json!([
@@ -339,20 +356,20 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
             "identity": 1
         }
     ]);
-    eprintln!("[gateway] sending our identify: {}", our_identify);
+    debug_log(&format!("[gateway] sending our identify: {}", our_identify));
     if write_frame(stream, &our_identify.to_string()).is_err() {
-        eprintln!("[gateway] FAILED to send identify");
+        debug_log("[gateway] FAILED to send identify");
         return None;
     }
 
     // Step 5: Read ReplyIdentify.
     let reply_raw = match read_frame(stream) {
         Ok(msg) => {
-            eprintln!("[gateway] got reply: {}", msg);
+            debug_log(&format!("[gateway] got reply: {}", msg));
             msg
         }
         Err(e) => {
-            eprintln!("[gateway] FAILED to read reply: {}", e);
+            debug_log(&format!("[gateway] FAILED to read reply: {}", e));
             return None;
         }
     };
@@ -360,12 +377,11 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
     let reply: serde_json::Value = match serde_json::from_str(&reply_raw) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[gateway] FAILED to parse reply JSON: {}", e);
+            debug_log(&format!("[gateway] FAILED to parse reply JSON: {}", e));
             return None;
         }
     };
 
-    // Parse interpreter info from ReplyIdentify.
     let info = if let Some(arr) = reply.as_array() {
         if let Some(obj) = arr.get(1) {
             InterpreterInfo {
@@ -386,7 +402,7 @@ fn perform_handshake(stream: &mut TcpStream) -> Option<InterpreterInfo> {
         InterpreterInfo::default()
     };
 
-    eprintln!("[gateway] handshake complete, info: {:?}", info);
+    debug_log(&format!("[gateway] handshake complete"));
     Some(info)
 }
 

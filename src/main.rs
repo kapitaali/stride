@@ -15,13 +15,21 @@ use stride::gateway::{ExecuteResult, GatewayCommand, GatewayMessage, GatewayServ
 use stride::ui::{self, Dialog, EditorState};
 use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn debug_log(msg: &str) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open("/tmp/stride_debug.log") {
+        let _ = writeln!(f, "{}", msg);
+    }
+}
 
 fn main() {
-    eprintln!("[main] starting stride...");
+    debug_log("[main] starting stride...");
     let args: Vec<String> = env::args().collect();
-    eprintln!("[main] args: {:?}", args);
+    debug_log(&format!("[main] args: {:?}", args));
     let mut config = EditorConfig::load(&EditorConfig::default_path()).unwrap_or_default();
-    eprintln!("[main] config loaded: port={}, executable={}", config.gateway_port, config.gateway_executable);
+    debug_log(&format!("[main] config loaded: port={}, executable={}", config.gateway_port, config.gateway_executable));
 
     // Parse --port argument
     if let Some(pos) = args.iter().position(|a| a == "--port") {
@@ -78,8 +86,9 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     });
     state.gateway_status = format!("listening on port {}", server_port);
 
-    // Auto-start interpreter if configured and not running
+    // Auto-start interpreter if configured
     if state.config.auto_connect {
+        debug_log(&format!("[main] auto_connect enabled, trying to spawn: {} {}", state.config.gateway_executable, state.config.gateway_args));
         try_spawn_interpreter(&state.config);
     }
 
@@ -89,7 +98,7 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    eprintln!("[main] entering TUI event loop...");
+    debug_log("[main] entering TUI event loop...");
     let res: std::io::Result<()> = loop {
         terminal
             .draw(|f| ui::draw(f, &state))
