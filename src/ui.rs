@@ -42,6 +42,11 @@ pub struct EditorState {
     pub sec_label: String,
     /// Results pane display mode: 1=compact, 2=expanded (50/50 horizontal), 3=split (50/50 vertical).
     pub results_mode: u8,
+    /// Internal clipboard for Cut/Copy/Paste (not system clipboard).
+    pub clipboard: String,
+    /// Undo/redo stacks for the active buffer (Buffer clones).
+    pub undo_stack: Vec<Buffer>,
+    pub redo_stack: Vec<Buffer>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +90,9 @@ impl EditorState {
             io_label: "⎕IO=1".to_string(),
             sec_label: "⎕SEC=0".to_string(),
             results_mode: 1,
+            clipboard: String::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 

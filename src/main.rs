@@ -245,6 +245,12 @@ fn handle_key(
         }
         (KeyCode::Char('s'), KeyModifiers::CONTROL) => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
+            Err(e) if e.to_string().contains("no file") => {
+                state.dialog = Some(Dialog::SaveAs {
+                    path: String::new(),
+                });
+                state.status = "enter file name — Save As".to_string();
+            }
             Err(e) => state.status = format!("save failed: {e}"),
         },
         (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
@@ -288,7 +294,10 @@ fn handle_key(
             }
         }
         // Terminal sends Ctrl+H (0x08) for Backspace on some setups; treat it as Backspace.
-        (KeyCode::Char('h'), KeyModifiers::CONTROL) => state.buffer_mut().backspace(),
+        (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
+            push_undo(state);
+            state.buffer_mut().backspace();
+        }
         (KeyCode::Tab, _) => {
             state.palette_row = (state.palette_row + 1) % stride::characters::row_count();
             state.palette_col = 0;
@@ -322,9 +331,13 @@ fn handle_key(
             state.palette_col = (state.palette_col + len - 1) % len;
             state.status = stride::ui::focused_entry_name(state);
         }
-        (KeyCode::Enter, KeyModifiers::NONE) => state.buffer_mut().insert_newline(),
+        (KeyCode::Enter, KeyModifiers::NONE) => {
+            push_undo(state);
+            state.buffer_mut().insert_newline();
+        }
         // Ctrl+Space inserts the focused palette glyph; Space is a normal space.
         (KeyCode::Char(' '), KeyModifiers::CONTROL) => {
+            push_undo(state);
             let glyph = state.palette().entries[state.palette_col].glyph;
             state.buffer_mut().insert_str(glyph);
         }
@@ -333,10 +346,17 @@ fn handle_key(
             state.menu_focus = 0;
         }
         (KeyCode::Char(c), _) => {
+            push_undo(state);
             state.buffer_mut().insert_char(c);
         }
-        (KeyCode::Backspace, _) => state.buffer_mut().backspace(),
-        (KeyCode::Delete, _) => state.buffer_mut().delete_forwards(),
+        (KeyCode::Backspace, _) => {
+            push_undo(state);
+            state.buffer_mut().backspace();
+        }
+        (KeyCode::Delete, _) => {
+            push_undo(state);
+            state.buffer_mut().delete_forwards();
+        }
         (KeyCode::Up, _) => state.buffer_mut().move_up(),
         (KeyCode::Down, _) => state.buffer_mut().move_down(),
         (KeyCode::Left, _) => state.buffer_mut().move_left(),
@@ -390,10 +410,83 @@ fn menu_action(
         }
         2 => match state.buffer_mut().save() {
             Ok(()) => state.status = "saved".to_string(),
+            Err(e) if e.to_string().contains("no file") => {
+                state.dialog = Some(Dialog::SaveAs {
+                    path: String::new(),
+                });
+                state.status = "enter file name — Save As".to_string();
+            }
             Err(e) => state.status = format!("save failed: {e}"),
         },
-        3 => state.status = "Save As: not wired to a file dialog yet".to_string(),
-        4..=8 => state.status = "edit action not yet implemented".to_string(),
+        3 => {
+            let initial = state
+                .buffer()
+                .file()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            state.dialog = Some(Dialog::SaveAs { path: initial });
+        }
+        4 => {
+            if let Some(prev) = state.undo_stack.pop() {
+                let cur = state.buffer().clone();
+                state.redo_stack.push(cur);
+                state.buffers[state.active_buffer] = prev;
+                state.status = "undo".to_string();
+            } else {
+                state.status = "nothing to undo".to_string();
+            }
+        }
+        5 => {
+            if let Some(next) = state.redo_stack.pop() {
+                let cur = state.buffer().clone();
+                state.undo_stack.push(cur);
+                state.buffers[state.active_buffer] = next;
+                state.status = "redo".to_string();
+            } else {
+                state.status = "nothing to redo".to_string();
+            }
+        }
+        6 => {
+            // Cut = copy + delete line
+            let line = state.buffer().current_line().to_string();
+            if !line.is_empty() {
+                state.clipboard = line;
+                push_undo(state);
+                state.buffer_mut().remove_current_line();
+                state.status = "cut".to_string();
+            } else {
+                state.status = "nothing to cut".to_string();
+            }
+        }
+        7 => {
+            let line = state.buffer().current_line().to_string();
+            state.clipboard = line.clone();
+            state.status = if line.is_empty() {
+                "nothing to copy".to_string()
+            } else {
+                "copied".to_string()
+            };
+        }
+        8 => {
+            if state.clipboard.is_empty() {
+                state.status = "clipboard empty".to_string();
+            } else {
+                push_undo(state);
+                let paste = state.clipboard.clone();
+                // May contain newlines: split and insert
+                if paste.contains('\n') {
+                    for (i, part) in paste.lines().enumerate() {
+                        if i > 0 {
+                            state.buffer_mut().insert_newline();
+                        }
+                        state.buffer_mut().insert_str(part);
+                    }
+                } else {
+                    state.buffer_mut().insert_str(&paste);
+                }
+                state.status = "pasted".to_string();
+            }
+        }
         9 => {
             state.dialog = Some(Dialog::Help { scroll: 0 });
         }
@@ -515,6 +608,15 @@ fn try_spawn_interpreter(config: &EditorConfig) {
     }
 }
 
+fn push_undo(state: &mut EditorState) {
+    let snap = state.buffer().clone();
+    state.undo_stack.push(snap);
+    state.redo_stack.clear();
+    if state.undo_stack.len() > 200 {
+        state.undo_stack.remove(0);
+    }
+}
+
 fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers) {
     if let Some(dialog) = &mut state.dialog {
         match dialog {
@@ -620,9 +722,39 @@ fn handle_dialog_key(state: &mut EditorState, code: KeyCode, mods: KeyModifiers)
                     _ => {}
                 }
             }
-            Dialog::SaveAs { .. } => {
-                state.dialog = None;
-            }
+            Dialog::SaveAs { path } => match code {
+                KeyCode::Esc => state.dialog = None,
+                KeyCode::Enter => {
+                    let p = path.trim().to_string();
+                    if p.is_empty() {
+                        state.status = "save cancelled: empty path".to_string();
+                        return;
+                    }
+                    let pb = std::path::PathBuf::from(&p);
+                    // If the path ends in / or is an existing directory, report it.
+                    if p.ends_with('/') || pb.is_dir() {
+                        state.status = format!("cannot save {}: is a directory", p);
+                        return;
+                    }
+                    match state.buffer_mut().save_as(&pb) {
+                        Ok(()) => {
+                            state.status = format!("saved {}", p);
+                            state.dialog = None;
+                        }
+                        Err(e) => state.status = format!("save failed: {e}"),
+                    }
+                }
+                KeyCode::Backspace => {
+                    path.pop();
+                }
+                KeyCode::Char('h') if mods == KeyModifiers::CONTROL => {
+                    path.pop();
+                }
+                KeyCode::Char(c) => {
+                    path.push(c);
+                }
+                _ => {}
+            },
         }
     }
 }

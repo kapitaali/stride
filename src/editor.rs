@@ -245,6 +245,30 @@ impl Buffer {
         self.cursor.col = col;
         self.clamp_cursor();
     }
+
+    /// Remove the current line (for Cut). Keeps at least one line.
+    pub fn remove_current_line(&mut self) {
+        if self.lines.len() > 1 {
+            self.lines.remove(self.cursor.row);
+            if self.cursor.row >= self.lines.len() {
+                self.cursor.row = self.lines.len() - 1;
+            }
+            self.cursor.col = 0;
+            self.clamp_cursor();
+            self.dirty = true;
+        } else {
+            self.lines[0].clear();
+            self.cursor.col = 0;
+            self.dirty = true;
+        }
+    }
+
+    /// Clear the current line without removing it.
+    pub fn clear_current_line(&mut self) {
+        self.lines[self.cursor.row].clear();
+        self.cursor.col = 0;
+        self.dirty = true;
+    }
 }
 
 #[cfg(test)]
