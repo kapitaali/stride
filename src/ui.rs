@@ -222,7 +222,7 @@ pub fn draw(frame: &mut ratatui::Frame, state: &EditorState) {
     // File dialog overlay (open/save).
     if let Some(dialog) = &state.dialog {
         let (w, h) = match dialog {
-            Dialog::OpenFile { files, .. } => (50u16, (files.len() + 6).max(8) as u16),
+            Dialog::OpenFile { files, .. } => (50u16, (files.len() as u16 + 6).clamp(8, 20)),
             Dialog::SaveAs { .. } => (50u16, 5u16),
             Dialog::Help { scroll: _ } => (70u16, 32u16),
         };
@@ -476,6 +476,17 @@ fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
             cursor,
             files,
         } => {
+            // Dialog height is capped at 20 in draw(), so visible file rows = h - 6.
+            let visible = 14usize;
+            let start = if files.len() <= visible {
+                0
+            } else {
+                // Keep cursor visible, centered where possible.
+                let half = visible / 2;
+                (*cursor).saturating_sub(half).min(files.len() - visible)
+            };
+            let end = (start + visible).min(files.len());
+
             let mut text = String::new();
             text.push_str("Open File\n\n");
             text.push_str("Path: ");
@@ -485,8 +496,12 @@ fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
             if files.is_empty() {
                 text.push_str("(no files in directory)");
             } else {
-                for (i, file) in files.iter().enumerate() {
-                    if i == *cursor {
+                if start > 0 {
+                    text.push_str("    …\n");
+                }
+                for (i, file) in files[start..end].iter().enumerate() {
+                    let abs = start + i;
+                    if abs == *cursor {
                         text.push_str("  ▶ ");
                     } else {
                         text.push_str("    ");
@@ -494,13 +509,21 @@ fn render_dialog(dialog: &Dialog) -> Paragraph<'static> {
                     text.push_str(file);
                     text.push('\n');
                 }
+                if end < files.len() {
+                    text.push_str("    …");
+                }
             }
 
-            Paragraph::new(text).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Open File (↑↓ to navigate, Enter to open, ESC to cancel)"),
-            )
+            let title = if files.len() > visible {
+                format!(
+                    "Open File (↑↓ to navigate {}/{} ESC to cancel)",
+                    cursor + 1,
+                    files.len()
+                )
+            } else {
+                "Open File (↑↓ to navigate, Enter to open, ESC to cancel)".to_string()
+            };
+            Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(title))
         }
         Dialog::SaveAs { path } => {
             let text = format!("Save As\n\n{path}_");
