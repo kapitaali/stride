@@ -558,7 +558,8 @@ Home / End      Jump to start / end of line
 BUFFER MANAGEMENT
 ─────────────────
 Ctrl+N          New buffer (cycles after 9)
-Ctrl+1 … Ctrl+9 Switch to buffer N
+Ctrl+1 … Ctrl+9 Switch to buffer N (enhanced protocol)
+Alt+1 … Alt+9   Same — works on every terminal
 Ctrl+W          Close current buffer
 Ctrl+O          Open file into new buffer
 

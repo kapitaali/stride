@@ -293,6 +293,21 @@ fn handle_key(
                 state.active_buffer = idx;
             }
         }
+        // Alt+Number also switches buffers — Ctrl+Number collides with Esc
+        // and other C0 controls on classic terminals (qterminal, tmux), so
+        // without the kitty enhanced protocol Ctrl+3 is indistinguishable from
+        // Esc and opens the menu. Alt+Number works everywhere.
+        (KeyCode::Char(c), KeyModifiers::ALT) if c >= '1' && c <= '9' => {
+            let idx = (c as u8 - b'1') as usize;
+            if idx < state.buffers.len() {
+                state.active_buffer = idx;
+            } else {
+                while state.buffers.len() <= idx {
+                    state.buffers.push(Buffer::new());
+                }
+                state.active_buffer = idx;
+            }
+        }
         // Terminal sends Ctrl+H (0x08) for Backspace on some setups; treat it as Backspace.
         (KeyCode::Char('h'), KeyModifiers::CONTROL) => {
             push_undo(state);
