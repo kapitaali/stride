@@ -381,12 +381,15 @@ fn handle_interpreter(
                 }
             }
             "AppendSessionOutput" => {
-                let text = args["result"].as_str().unwrap_or("").to_string();
+                // Kap and Dyalog terminate each row with "\n"; real RIDE
+                // treats it as the line terminator, so strip it here —
+                // otherwise every row renders with a blank line after it.
+                let text = normalize_output(args["result"].as_str().unwrap_or(""));
                 let output_type = args["type"].as_u64().unwrap_or(1) as u8;
                 let _ = tx.send(GatewayMessage::SessionOutput { text, output_type });
             }
             "EchoInput" => {
-                let text = args["input"].as_str().unwrap_or("").to_string();
+                let text = normalize_output(args["input"].as_str().unwrap_or(""));
                 let _ = tx.send(GatewayMessage::SessionOutput {
                     text,
                     output_type: 14,
@@ -581,6 +584,13 @@ fn read_frame(stream: &mut TcpStream) -> Result<String, String> {
     String::from_utf8(payload).map_err(|_| "invalid UTF-8".to_string())
 }
 
+/// Strip protocol line terminators from interpreter output text (see the
+/// AppendSessionOutput arm above).
+fn normalize_output(text: &str) -> String {
+    text.trim_end_matches(|c| c == '\r' || c == '\n')
+        .to_string()
+}
+
 fn frame(payload: &str) -> Vec<u8> {
     let mut buf = Vec::with_capacity(8 + payload.len());
     let total_len = (8 + payload.len()) as u32;
@@ -593,6 +603,88 @@ fn frame(payload: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_output() {
+        // Kap-style rows arrive terminated; terminator must go, content stays.
+        assert_eq!(normalize_output("┌→────┐\n"), "┌→────┐");
+        assert_eq!(normalize_output("│3 4 5│\r\n"), "│3 4 5│");
+        // Interior newlines (multi-line rust-apl results) are preserved.
+        assert_eq!(normalize_output("a\nb\n"), "a\nb");
+        assert_eq!(normalize_output("no newline"), "no newline");
+        assert_eq!(normalize_output(""), "");
+    }
+
+    #[test]
+    fn test_kap_rows_arrive_trimmed() {
+        // End-to-end: replay Kap's captured 3 3 rho-iota 9 session through
+        // the real gateway and assert the rows arrive without terminators.
+        use std::io::{Read, Write};
+        use std::time::Duration;
+
+        fn read_frame(s: &mut std::net::TcpStream) -> String {
+            let mut h = [0u8; 8];
+            s.read_exact(&mut h).unwrap();
+            let n = u32::from_be_bytes([h[0], h[1], h[2], h[3]]) as usize;
+            assert_eq!(&h[4..8], b"RIDE");
+            let mut p = vec![0u8; n - 8];
+            s.read_exact(&mut p).unwrap();
+            String::from_utf8(p).unwrap()
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (server, ui_rx, _ui_tx) = GatewayServer::new("127.0.0.1".to_string(), port);
+        std::thread::spawn(move || {
+            let _ = server.run(listener);
+        });
+
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        // Kap-style framed hello.
+        s.write_all(&frame("SupportedProtocols=2")).unwrap();
+        assert_eq!(read_frame(&mut s), "SupportedProtocols=2");
+        assert_eq!(read_frame(&mut s), "UsingProtocol=2");
+
+        // Kap's exact captured messages: echo, then one row per message.
+        let send = |s: &mut std::net::TcpStream, msg: &str| {
+            s.write_all(&frame(msg)).unwrap();
+        };
+        send(&mut s, r#"["EchoInput",{"input":"3 3⍴⍳9","group":0}]"#);
+        for row in [
+            "┌→────┐\n",
+            "↓0 1 2│\n",
+            "│3 4 5│\n",
+            "│6 7 8│\n",
+            "└─────┘\n",
+        ] {
+            let msg = serde_json::json!(["AppendSessionOutput",
+                {"result": row, "type": 2, "group": 0}])
+            .to_string();
+            send(&mut s, &msg);
+        }
+
+        // First message is Connected; then echo + 5 rows, all trimmed.
+        let mut texts = Vec::new();
+        for _ in 0..7 {
+            match ui_rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                GatewayMessage::Connected { .. } => {}
+                GatewayMessage::SessionOutput { text, .. } => texts.push(text),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            texts,
+            vec![
+                "3 3⍴⍳9",
+                "┌→────┐",
+                "↓0 1 2│",
+                "│3 4 5│",
+                "│6 7 8│",
+                "└─────┘"
+            ]
+        );
+    }
 
     #[test]
     fn test_frame() {
