@@ -19,6 +19,9 @@ use stride::gateway::{ExecuteResult, GatewayCommand, GatewayMessage, GatewayServ
 use stride::ui::{self, Dialog, EditorState};
 
 fn debug_log(msg: &str) {
+    if std::env::var_os("STRIDE_DEBUG").is_none() {
+        return;
+    }
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -138,61 +141,65 @@ fn run_tui_mode(config: EditorConfig, initial_file: Option<PathBuf>) -> std::io:
     let mut terminal = Terminal::new(backend)?;
 
     debug_log("[main] entering TUI event loop...");
-    let res: std::io::Result<()> = loop {
+    let res: std::io::Result<()> = 'outer: loop {
         terminal
             .draw(|f| ui::draw(f, &state))
             .map_err(|e| std::io::Error::other(format!("render: {e}")))?;
 
-        // Check for messages from the gateway server.
-        match gateway_rx.try_recv() {
-            Ok(GatewayMessage::Connected { addr: _, info }) => {
-                // Show the gateway address (from editor.toml) rather than the
-                // interpreter's ephemeral source port, which changes each run.
-                let gateway = state.config.gateway_addr();
-                state.gateway_status = if info.vendor.is_empty() {
-                    format!("interpreter connected — gateway {}", gateway)
-                } else {
-                    format!(
-                        "interpreter connected — gateway {} ({})",
-                        gateway, info.vendor
-                    )
-                };
-            }
-            Ok(GatewayMessage::Disconnected) => {
-                state.gateway_status = format!("listening on {}", state.config.gateway_addr());
-            }
-            Ok(GatewayMessage::SessionOutput { text, output_type }) => {
-                // Only display output types that are actual results (1, 2, 5, 7, 8, 11, 14)
-                // Skip reserved types (0, 6, 10, 13) and status (9)
-                match output_type {
-                    0 | 6 | 10 | 13 => {} // reserved
-                    9 => {}               // status window info
-                    _ => state.push_result(text),
+        // Drain ALL pending gateway messages — Kap streams one row per
+        // message, so a single try_recv would show rows staggered across
+        // frames (150 ms per row). Drain first, then poll for input.
+        loop {
+            match gateway_rx.try_recv() {
+                Ok(GatewayMessage::Connected { addr: _, info }) => {
+                    // Show the gateway address (from editor.toml) rather than the
+                    // interpreter's ephemeral source port, which changes each run.
+                    let gateway = state.config.gateway_addr();
+                    state.gateway_status = if info.vendor.is_empty() {
+                        format!("interpreter connected — gateway {}", gateway)
+                    } else {
+                        format!(
+                            "interpreter connected — gateway {} ({})",
+                            gateway, info.vendor
+                        )
+                    };
                 }
-            }
-            Ok(GatewayMessage::SetPromptType { prompt_type }) => {
-                state.status = format!("prompt type: {}", prompt_type);
-            }
-            Ok(GatewayMessage::HadError) => {
-                state.status = "error occurred".to_string();
-            }
-            Ok(GatewayMessage::GetLogReply { lines }) => {
-                for line in lines {
-                    state.push_result(line.text);
+                Ok(GatewayMessage::Disconnected) => {
+                    state.gateway_status = format!("listening on {}", state.config.gateway_addr());
                 }
+                Ok(GatewayMessage::SessionOutput { text, output_type }) => {
+                    // Only display output types that are actual results (1, 2, 5, 7, 8, 11, 14)
+                    // Skip reserved types (0, 6, 10, 13) and status (9)
+                    match output_type {
+                        0 | 6 | 10 | 13 => {} // reserved
+                        9 => {}               // status window info
+                        _ => state.push_result(text),
+                    }
+                }
+                Ok(GatewayMessage::SetPromptType { prompt_type }) => {
+                    state.status = format!("prompt type: {}", prompt_type);
+                }
+                Ok(GatewayMessage::HadError) => {
+                    state.status = "error occurred".to_string();
+                }
+                Ok(GatewayMessage::GetLogReply { lines }) => {
+                    for line in lines {
+                        state.push_result(line.text);
+                    }
+                }
+                Ok(GatewayMessage::InterpreterStatus { io, si, .. }) => {
+                    state.io_label = format!("⎕IO={}", io);
+                    state.status = format!("SI={}", si);
+                }
+                Ok(GatewayMessage::Configuration { name, value }) => {
+                    state.status = format!("config {} = {}", name, value);
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => break 'outer Ok(()),
             }
-            Ok(GatewayMessage::InterpreterStatus { io, si, .. }) => {
-                state.io_label = format!("⎕IO={}", io);
-                state.status = format!("SI={}", si);
-            }
-            Ok(GatewayMessage::Configuration { name, value }) => {
-                state.status = format!("config {} = {}", name, value);
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => break Ok(()),
         }
 
-        if event::poll(Duration::from_millis(150))? {
+        if event::poll(Duration::from_millis(20))? {
             if let Event::Key(key) = event::read()? {
                 if state.dialog.is_some() {
                     handle_dialog_key(&mut state, key.code, key.modifiers);
