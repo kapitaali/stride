@@ -29,6 +29,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn debug_log(msg: &str) {
+    // Gated so normal builds never pay per-message file I/O.
+    // Set STRIDE_DEBUG=1 to re-enable the /tmp/stride_debug.log dump.
+    if std::env::var_os("STRIDE_DEBUG").is_none() {
+        return;
+    }
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
